@@ -1,0 +1,29 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "wibechat",
+  "main": "src/worker/index.ts",
+  "compatibility_date": "2024-11-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "assets": {
+    "directory": "./dist",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "waba-db",
+      "database_id": "waba-db-local"
+    }
+  ],
+  "r2_buckets": [
+    {
+      "binding": "MEDIA_BUCKET",
+      "bucket_name": "waba-media"
+    }
+  ],
+  "vars": {
+    "ADMIN_EMAIL": "contact@bytenex.io",
+    "ENVIRONMENT": "production"
+  }
+}
