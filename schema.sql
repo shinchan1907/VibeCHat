@@ -19,6 +19,8 @@ CREATE TABLE IF NOT EXISTS otp_codes (
   code TEXT NOT NULL,
   expires_at DATETIME NOT NULL,
   used INTEGER DEFAULT 0,
+  attempts INTEGER DEFAULT 0,
+  ip TEXT,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -41,6 +43,7 @@ CREATE TABLE IF NOT EXISTS waba_settings (
   display_phone_number TEXT,
   business_name TEXT DEFAULT 'ByteNex WABA',
   resend_api_key TEXT,
+  zeptomail_api_key TEXT,
   from_email TEXT DEFAULT 'contact@bytenex.io',
   updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );

@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { MessageSquare, X } from 'lucide-react';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { WabaProvider, useWaba } from './context/WabaContext';
 import { Sidebar } from './components/Sidebar';
@@ -16,7 +17,8 @@ import { AuditLogs } from './pages/AuditLogs';
 
 const DashboardContent: React.FC = () => {
   const { isAuthenticated, isLoading } = useAuth();
-  const { activeTab, setActiveTab } = useWaba();
+  const { activeTab, setActiveTab, connectionStatus } = useWaba();
+  const [bannerDismissed, setBannerDismissed] = useState(false);
 
   if (isLoading) {
     return (
@@ -34,10 +36,10 @@ const DashboardContent: React.FC = () => {
         }}
       >
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '16px' }}>
-          <div className="sidebar-logo" style={{ width: '52px', height: '52px', fontSize: '22px', margin: 0 }}>
-            In
+          <div className="sidebar-logo" style={{ width: '52px', height: '52px', fontSize: '22px', margin: 0, backgroundColor: 'var(--accent-emerald)' }}>
+            <MessageSquare size={26} />
           </div>
-          <span>Loading ByteNex Platform...</span>
+          <span>Loading VibeChat...</span>
         </div>
       </div>
     );
@@ -102,7 +104,23 @@ const DashboardContent: React.FC = () => {
         <Sidebar />
         <div className="workspace-wrapper">
           <Header onActionClick={handleHeaderAction} />
-          <main style={{ flex: 1, overflow: 'hidden' }}>{renderActivePage()}</main>
+          {connectionStatus === 'offline' && !bannerDismissed && activeTab !== 'settings' && (
+            <div className="waba-banner" role="status">
+              <span>
+                <strong>WhatsApp not connected yet.</strong> Add your Phone Number ID and Meta
+                access token in Settings — messages, templates and broadcasts go live after that.
+              </span>
+              <button onClick={() => setActiveTab('settings')}>Open Settings</button>
+              <button
+                className="waba-banner-dismiss"
+                onClick={() => setBannerDismissed(true)}
+                aria-label="Dismiss"
+              >
+                <X size={14} />
+              </button>
+            </div>
+          )}
+          <main style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column', minHeight: 0 }}>{renderActivePage()}</main>
         </div>
       </div>
     </div>

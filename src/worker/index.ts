@@ -1,5 +1,6 @@
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
+import { secureHeaders } from 'hono/secure-headers';
 import { Env } from './types';
 import { authRouter } from './routes/auth';
 import { webhookRouter } from './routes/webhook';
@@ -14,9 +15,47 @@ import { botsRouter } from './routes/bots';
 
 const app = new Hono<{ Bindings: Env }>();
 
-// Enable CORS for frontend development & webhook integration
+// Security headers on every response (API + SPA assets served by the worker).
+app.use('*', secureHeaders({
+  contentSecurityPolicy: {
+    defaultSrc: ["'self'"],
+    scriptSrc: ["'self'"],
+    styleSrc: ["'self'", "'unsafe-inline'", 'https://fonts.googleapis.com'],
+    fontSrc: ["'self'", 'https://fonts.gstatic.com', 'data:'],
+    imgSrc: ["'self'", 'data:', 'blob:', 'https:'],
+    mediaSrc: ["'self'", 'data:', 'blob:', 'https:'],
+    connectSrc: ["'self'", 'https:'],
+    frameAncestors: ["'none'"],
+    baseUri: ["'self'"],
+    formAction: ["'self'"],
+  },
+  xFrameOptions: 'DENY',
+  xContentTypeOptions: 'nosniff',
+  referrerPolicy: 'strict-origin-when-cross-origin',
+}));
+
+// CORS: same-origin SPA needs no CORS at all. Previously this was
+// origin:'*' with Authorization allowed — any website could call the
+// API with a stolen token. Now only our own origins are reflected:
+// the bytenex.io zone, this account's workers.dev subdomain, and local dev.
 app.use('*', cors({
-  origin: '*',
+  origin: (origin) => {
+    if (!origin) return null;
+    try {
+      const host = new URL(origin).hostname;
+      if (
+        host === 'bytenex.io' ||
+        host.endsWith('.bytenex.io') ||
+        host === 'still-feather-083f.workers.dev' ||
+        host.endsWith('.still-feather-083f.workers.dev') ||
+        host === 'localhost' ||
+        host === '127.0.0.1'
+      ) {
+        return origin;
+      }
+    } catch { /* malformed origin */ }
+    return null;
+  },
   allowMethods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   allowHeaders: ['Content-Type', 'Authorization'],
 }));

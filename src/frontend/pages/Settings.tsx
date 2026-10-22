@@ -20,11 +20,12 @@ export const Settings: React.FC = () => {
     waba_id: '',
     access_token: '',
     app_secret: '',
-    verify_token: 'bytenex_waba_verify_2026',
+    verify_token: '',
     display_phone_number: '',
     business_name: 'WibeChat Business',
     resend_api_key: '',
-    from_email: 'contact@bytenex.io',
+    zeptomail_api_key: '',
+    from_email: 'no-reply@bytenex.io',
   });
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -92,7 +93,7 @@ export const Settings: React.FC = () => {
   };
 
   return (
-    <div style={{ padding: '0 32px 32px 32px', overflowY: 'auto', height: 'calc(100vh - 90px)', maxWidth: '960px' }}>
+    <div style={{ padding: '0 32px 32px 32px', overflowY: 'auto', flex: 1, minHeight: 0, width: '100%', maxWidth: '960px' }}>
       <form onSubmit={handleSave} style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
         {/* Header */}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -297,13 +298,13 @@ export const Settings: React.FC = () => {
             <div style={{ display: 'flex', gap: '8px' }}>
               <input
                 type="text"
-                value={settings.verify_token || 'bytenex_waba_verify_2026'}
+                value={settings.verify_token || ''}
                 onChange={(e) => setSettings({ ...settings, verify_token: e.target.value })}
                 style={{ flex: 1, fontFamily: 'var(--font-mono)' }}
               />
               <button
                 type="button"
-                onClick={() => copyToClipboard(settings.verify_token || 'bytenex_waba_verify_2026', setCopiedToken)}
+                onClick={() => copyToClipboard(settings.verify_token || '', setCopiedToken)}
                 className="btn-secondary"
               >
                 {copiedToken ? <Check size={13} style={{ color: '#16a34a' }} /> : <Copy size={13} />}
@@ -342,13 +343,44 @@ export const Settings: React.FC = () => {
 
             <div>
               <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, marginBottom: '4px' }}>
-                Resend API Key (Optional for production email dispatch)
+                Resend API Key (Optional fallback)
               </label>
               <input
                 type="password"
                 placeholder="re_..."
                 value={settings.resend_api_key || ''}
                 onChange={(e) => setSettings({ ...settings, resend_api_key: e.target.value })}
+                style={{ width: '100%', fontFamily: 'var(--font-mono)' }}
+              />
+            </div>
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px' }}>
+            <div>
+              <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, marginBottom: '4px' }}>
+                ZeptoMail API Key (OTP email — active provider)
+              </label>
+              <input
+                type="password"
+                placeholder="Zoho-enczapikey ..."
+                value={settings.zeptomail_api_key || ''}
+                onChange={(e) => setSettings({ ...settings, zeptomail_api_key: e.target.value })}
+                style={{ width: '100%', fontFamily: 'var(--font-mono)' }}
+              />
+              <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '4px' }}>
+                OTP login emails are dispatched via ZeptoMail (India DC). Paste only the key part, without the <code>Zoho-enczapikey</code> prefix.
+              </div>
+            </div>
+
+            <div>
+              <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, marginBottom: '4px' }}>
+                From Email (must be a verified ZeptoMail sender)
+              </label>
+              <input
+                type="text"
+                placeholder="no-reply@bytenex.io"
+                value={settings.from_email || ''}
+                onChange={(e) => setSettings({ ...settings, from_email: e.target.value })}
                 style={{ width: '100%', fontFamily: 'var(--font-mono)' }}
               />
             </div>

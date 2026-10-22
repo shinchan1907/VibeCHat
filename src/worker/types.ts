@@ -5,6 +5,15 @@ export interface Env {
   ENVIRONMENT?: string;
   ASSETS?: Fetcher;
   EMAIL?: any; // Cloudflare Email Routing send_email binding
+  // Cloudflare Access (Zero Trust) JWT verification.
+  // CF_ACCESS_TEAM_DOMAIN e.g. "bytenex.cloudflareaccess.com".
+  // The cf-access login path is DISABLED unless this is set — the
+  // Cf-Access-Authenticated-User-Email header alone is never trusted,
+  // because anyone reaching the worker directly could spoof it.
+  CF_ACCESS_TEAM_DOMAIN?: string;
+  CF_ACCESS_AUD?: string;
+  // Fallback webhook verify token if none is stored in waba_settings.
+  META_VERIFY_TOKEN?: string;
 }
 
 export interface WabaSettings {
@@ -17,6 +26,7 @@ export interface WabaSettings {
   display_phone_number?: string;
   business_name?: string;
   resend_api_key?: string;
+  zeptomail_api_key?: string;
   from_email?: string;
   updated_at?: string;
 }

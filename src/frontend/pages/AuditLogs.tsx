@@ -62,7 +62,7 @@ export const AuditLogs: React.FC = () => {
   };
 
   return (
-    <div style={{ padding: '0 32px 32px 32px', overflowY: 'auto', height: 'calc(100vh - 90px)', maxWidth: '960px' }}>
+    <div style={{ padding: '0 32px 32px 32px', overflowY: 'auto', flex: 1, minHeight: 0, width: '100%', maxWidth: '960px' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '18px' }}>
         <div>
           <h2 style={{ fontSize: '18px', fontWeight: 800, color: 'var(--text-primary)' }}>

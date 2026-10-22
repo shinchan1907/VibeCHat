@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useAuth } from '../context/AuthContext';
-import { Mail, ArrowRight, KeyRound, AlertCircle, CheckCircle2, Shield } from 'lucide-react';
+import { Mail, ArrowRight, KeyRound, AlertCircle, CheckCircle2, Shield, MessageSquare } from 'lucide-react';
 
 export const Login: React.FC = () => {
   const { requestOtp, verifyOtp, loginWithCfAccess } = useAuth();
@@ -88,15 +88,15 @@ export const Login: React.FC = () => {
         <div style={{ textAlign: 'center', marginBottom: '28px' }}>
           <div
             className="sidebar-logo"
-            style={{ width: '48px', height: '48px', fontSize: '22px', margin: '0 auto 16px' }}
+            style={{ width: '48px', height: '48px', fontSize: '22px', margin: '0 auto 16px', backgroundColor: 'var(--accent-emerald)' }}
           >
-            In
+            <MessageSquare size={24} />
           </div>
           <h1 style={{ fontSize: '22px', fontWeight: 800, color: 'var(--text-primary)', marginBottom: '4px' }}>
-            ByteNex WABA Platform
+            VibeChat
           </h1>
           <p style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>
-            Single-Business Administration Console
+            Bytenex • WhatsApp Business Console
           </p>
         </div>
 
@@ -134,10 +134,10 @@ export const Login: React.FC = () => {
           >
             <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontWeight: 700, marginBottom: '2px' }}>
               <CheckCircle2 size={15} />
-              <span>Instant Test Code Generated:</span>
+              <span>Development mode — test code:</span>
             </div>
             <div>
-              One-Time Password: <strong style={{ letterSpacing: '2px' }}>{previewOtp}</strong> (Auto-filled below)
+              One-Time Password: <strong style={{ letterSpacing: '2px' }}>{previewOtp}</strong> (auto-filled, local dev only — never shown in production)
             </div>
           </div>
         )}
@@ -213,6 +213,7 @@ export const Login: React.FC = () => {
                   onChange={(e) => setEmail(e.target.value)}
                   placeholder="contact@bytenex.io"
                   required
+                  autoComplete="email"
                   style={{ width: '100%', paddingLeft: '38px', background: '#ffffff' }}
                 />
               </div>
@@ -266,6 +267,9 @@ export const Login: React.FC = () => {
                   placeholder="123456"
                   required
                   autoFocus
+                  autoComplete="one-time-code"
+                  inputMode="numeric"
+                  pattern="[0-9]{6}"
                   style={{
                     width: '100%',
                     paddingLeft: '38px',

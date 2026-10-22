@@ -14,7 +14,7 @@ settingsRouter.get('/', async (c) => {
     settings = {
       id: 'default',
       business_name: 'ByteNex WABA',
-      verify_token: 'bytenex_waba_verify_2026',
+      verify_token: '',
       from_email: 'contact@bytenex.io',
     };
   }
@@ -29,9 +29,13 @@ settingsRouter.get('/', async (c) => {
     resend_api_key: settings.resend_api_key
       ? `${settings.resend_api_key.substring(0, 5)}...`
       : '',
+    zeptomail_api_key: settings.zeptomail_api_key
+      ? `${settings.zeptomail_api_key.substring(0, 5)}...`
+      : '',
     has_access_token: Boolean(settings.access_token),
     has_app_secret: Boolean(settings.app_secret),
     has_resend_api_key: Boolean(settings.resend_api_key),
+    has_zeptomail_api_key: Boolean(settings.zeptomail_api_key),
   };
 
   return c.json({ success: true, settings: maskedSettings });
@@ -57,14 +61,18 @@ settingsRouter.post('/', async (c) => {
     ? payload.resend_api_key
     : current.resend_api_key;
 
+  const zeptoKey = (payload.zeptomail_api_key && !payload.zeptomail_api_key.includes('...'))
+    ? payload.zeptomail_api_key
+    : current.zeptomail_api_key;
+
   const nowIso = new Date().toISOString();
 
   await c.env.DB.prepare(
     `INSERT INTO waba_settings (
-      id, phone_number_id, waba_id, access_token, app_secret, 
-      verify_token, display_phone_number, business_name, 
-      resend_api_key, from_email, updated_at
-    ) VALUES ('default', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      id, phone_number_id, waba_id, access_token, app_secret,
+      verify_token, display_phone_number, business_name,
+      resend_api_key, zeptomail_api_key, from_email, updated_at
+    ) VALUES ('default', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET
       phone_number_id = excluded.phone_number_id,
       waba_id = excluded.waba_id,
@@ -74,6 +82,7 @@ settingsRouter.post('/', async (c) => {
       display_phone_number = excluded.display_phone_number,
       business_name = excluded.business_name,
       resend_api_key = excluded.resend_api_key,
+      zeptomail_api_key = excluded.zeptomail_api_key,
       from_email = excluded.from_email,
       updated_at = excluded.updated_at`
   ).bind(
@@ -81,10 +90,11 @@ settingsRouter.post('/', async (c) => {
     payload.waba_id ?? current.waba_id ?? null,
     accessToken ?? null,
     appSecret ?? null,
-    payload.verify_token ?? current.verify_token ?? 'bytenex_waba_verify_2026',
+    payload.verify_token ?? current.verify_token ?? '',
     payload.display_phone_number ?? current.display_phone_number ?? null,
     payload.business_name ?? current.business_name ?? 'ByteNex WABA',
     resendKey ?? null,
+    zeptoKey ?? null,
     payload.from_email ?? current.from_email ?? 'contact@bytenex.io',
     nowIso
   ).run();

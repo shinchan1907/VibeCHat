@@ -6,6 +6,19 @@ export const mediaRouter = new Hono<{ Bindings: Env }>();
 /**
  * Upload media attachment (to Cloudflare R2 or local fallback)
  */
+const MAX_UPLOAD_BYTES = 16 * 1024 * 1024; // Meta WhatsApp media limit is 16MB
+const ALLOWED_UPLOAD_TYPES = [
+  'image/jpeg', 'image/png', 'image/webp',
+  'video/mp4', 'video/3gpp',
+  'audio/mpeg', 'audio/ogg', 'audio/amr', 'audio/mp4', 'audio/aac',
+  'application/pdf',
+  'application/msword',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  'application/vnd.ms-excel',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  'text/plain', 'text/csv',
+];
+
 mediaRouter.post('/upload', async (c) => {
   const body = await c.req.parseBody();
   const file = body['file'];
@@ -14,9 +27,19 @@ mediaRouter.post('/upload', async (c) => {
     return c.json({ success: false, error: 'No valid file uploaded' }, 400);
   }
 
-  const filename = file.name || `file_${Date.now()}`;
+  if (file.size > MAX_UPLOAD_BYTES) {
+    return c.json({ success: false, error: 'File too large (max 16MB)' }, 413);
+  }
+
   const contentType = file.type || 'application/octet-stream';
-  const fileKey = `uploads/${Date.now()}_${Math.random().toString(36).substring(7)}_${filename.replace(/\s+/g, '_')}`;
+  if (!ALLOWED_UPLOAD_TYPES.includes(contentType)) {
+    return c.json({ success: false, error: `File type not allowed: ${contentType}` }, 415);
+  }
+
+  const filename = file.name || `file_${Date.now()}`;
+  // Unguessable key (crypto UUID) — /api/media/file/* is reachable without a
+  // session because chat <img>/<audio> tags cannot send Authorization headers.
+  const fileKey = `uploads/${crypto.randomUUID()}_${filename.replace(/[^\w.\-]+/g, '_')}`;
 
   if (c.env.MEDIA_BUCKET) {
     try {
@@ -72,6 +95,13 @@ mediaRouter.get('/file/:key', async (c) => {
   object.writeHttpMetadata(headers);
   headers.set('etag', object.httpEtag);
   headers.set('Cache-Control', 'public, max-age=31536000, immutable');
+  headers.set('X-Content-Type-Options', 'nosniff');
+  // Never let an uploaded file render as active HTML/JS on this origin.
+  const ct = headers.get('Content-Type') || '';
+  if (ct.includes('html') || ct.includes('javascript') || ct.includes('svg')) {
+    headers.set('Content-Type', 'application/octet-stream');
+    headers.set('Content-Disposition', 'attachment');
+  }
 
   return new Response(object.body, { headers });
 });
@@ -105,7 +135,9 @@ mediaRouter.get('/proxy/:mediaId', async (c) => {
 
     const headers = new Headers();
     if (metaData.mime_type) headers.set('Content-Type', metaData.mime_type);
-    headers.set('Cache-Control', 'public, max-age=86400');
+    // Customer media is private — never let shared caches store it.
+    headers.set('Cache-Control', 'private, max-age=3600');
+    headers.set('X-Content-Type-Options', 'nosniff');
 
     return new Response(mediaRes.body, { headers });
   } catch (err: any) {

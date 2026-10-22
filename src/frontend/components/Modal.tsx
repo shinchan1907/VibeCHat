@@ -34,10 +34,13 @@ export const Modal: React.FC<ModalProps> = ({
         className="modal-card animate-fade-in"
         style={{ maxWidth }}
         onClick={(e) => e.stopPropagation()}
+        role="dialog"
+        aria-modal="true"
+        aria-label={title}
       >
         <div className="modal-header">
           <h2 style={{ fontSize: '17px', fontWeight: 700, color: 'var(--text-primary)' }}>{title}</h2>
-          <button onClick={onClose} className="btn-icon">
+          <button onClick={onClose} className="btn-icon" aria-label="Close dialog">
             <X size={18} />
           </button>
         </div>

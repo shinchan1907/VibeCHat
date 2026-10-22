@@ -15,7 +15,9 @@ webhookRouter.get('/', async (c) => {
     'SELECT verify_token FROM waba_settings WHERE id = "default"'
   ).first<WabaSettings>();
 
-  const configuredToken = settings?.verify_token || 'bytenex_waba_verify_2026';
+  // Fail closed: no token configured anywhere = no verification possible.
+  // (The previous hard-coded fallback token was public in this repo.)
+  const configuredToken = settings?.verify_token || c.env.META_VERIFY_TOKEN || '';
 
   if (mode === 'subscribe' && token === configuredToken) {
     console.log('✅ Meta Webhook successfully verified with challenge');
@@ -26,11 +28,62 @@ webhookRouter.get('/', async (c) => {
   return c.text('Forbidden: Invalid verify token', 403);
 });
 
+/** Timing-safe string comparison for HMAC signatures. */
+function timingSafeEqual(a: string, b: string): boolean {
+  if (a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return diff === 0;
+}
+
+async function hmacSha256Hex(secret: string, data: string): Promise<string> {
+  const key = await crypto.subtle.importKey(
+    'raw',
+    new TextEncoder().encode(secret),
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['sign']
+  );
+  const sig = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(data));
+  return [...new Uint8Array(sig)].map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
 /**
  * Meta Webhook Receiver (POST /api/webhook)
+ *
+ * SECURITY: Meta signs every webhook POST with X-Hub-Signature-256
+ * (HMAC-SHA256 of the raw body, keyed with the Meta App Secret).
+ * Without this check ANYONE on the internet could inject fake customer
+ * messages, fake delivery statuses, and trigger chatbot/bot replies
+ * (real WhatsApp sends billed to this business). Verification is
+ * enforced as soon as an App Secret is saved in Settings; before that
+ * the endpoint logs a warning so initial setup can still proceed.
  */
 webhookRouter.post('/', async (c) => {
-  const body = await c.req.json<any>().catch(() => null);
+  const rawBody = await c.req.text();
+
+  const settingsRow = await c.env.DB.prepare(
+    'SELECT app_secret FROM waba_settings WHERE id = "default"'
+  ).first<WabaSettings>();
+  const appSecret = settingsRow?.app_secret;
+
+  if (appSecret) {
+    const signature = c.req.header('x-hub-signature-256') || '';
+    const expected = 'sha256=' + (await hmacSha256Hex(appSecret, rawBody));
+    if (!signature || !timingSafeEqual(signature, expected)) {
+      console.warn('❌ Webhook rejected: invalid X-Hub-Signature-256');
+      return c.text('Forbidden: Invalid signature', 401);
+    }
+  } else {
+    console.warn('⚠️ Webhook accepted WITHOUT signature verification — no Meta App Secret configured yet. Save it in Settings > WABA to enforce verification.');
+  }
+
+  let body: any = null;
+  try {
+    body = JSON.parse(rawBody);
+  } catch {
+    body = null;
+  }
 
   if (!body || body.object !== 'whatsapp_business_account') {
     return c.text('EVENT_RECEIVED', 200);

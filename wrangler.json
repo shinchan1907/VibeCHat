@@ -13,7 +13,7 @@
     {
       "binding": "DB",
       "database_name": "waba-db",
-      "database_id": "waba-db-local"
+      "database_id": "43d765b0-1c3b-4f5d-a532-48e62bad9ac8"
     }
   ],
   "r2_buckets": [

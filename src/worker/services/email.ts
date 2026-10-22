@@ -12,10 +12,16 @@ export class EmailService {
   /**
    * Send Email OTP to contact@bytenex.io using Cloudflare's inbuilt Email System
    */
-  async sendOtpEmail(to: string, otp: string): Promise<{ sent: boolean; method: string; previewCode?: string }> {
-    console.log(`\n======================================================`);
-    console.log(`🔐 [Cloudflare OTP System] Login OTP for ${to}: ${otp}`);
-    console.log(`======================================================\n`);
+  async sendOtpEmail(to: string, otp: string): Promise<{ sent: boolean; method: string; previewCode?: string; diag?: string }> {
+    let diag: string | undefined;
+    // SECURITY: the OTP is a credential. Never log it and never return it to
+    // the API caller in production — either one turns "email OTP login" into
+    // "anyone who knows the admin email is admin". The preview code exists
+    // ONLY when ENVIRONMENT=development (local wrangler dev).
+    const isDev = this.env?.ENVIRONMENT === 'development';
+    if (isDev) {
+      console.log(`🔐 [DEV ONLY] Login OTP for ${to}: ${otp}`);
+    }
 
     const fromEmail = this.settings.from_email || 'contact@bytenex.io';
     const htmlContent = `
@@ -52,6 +58,36 @@ export class EmailService {
       </div>
     `;
 
+    // 0. ZeptoMail (Zoho transactional, India DC) — preferred when configured:
+    // free tier, and bytenex.io is already a verified ZeptoMail domain.
+    // (Cloudflare send_email needs the sending domain onboarded in CF Email
+    // Sending, which conflicts with the Google Workspace MX on bytenex.io.)
+    if (this.settings.zeptomail_api_key) {
+      try {
+        const res = await fetch('https://api.zeptomail.in/v1.1/email', {
+          method: 'POST',
+          headers: {
+            Authorization: `Zoho-enczapikey ${this.settings.zeptomail_api_key}`,
+            'Content-Type': 'application/json',
+            Accept: 'application/json',
+          },
+          body: JSON.stringify({
+            from: { address: fromEmail, name: 'VibeChat' },
+            to: [{ email_address: { address: to, name: 'ByteNex Admin' } }],
+            subject: 'Your VibeChat login code',
+            htmlbody: htmlContent,
+          }),
+        });
+        if (res.ok) {
+          return { sent: true, method: 'zeptomail', previewCode: isDev ? otp : undefined };
+        }
+        const errBody = (await res.text().catch(() => '')).slice(0, 300);
+        diag = `ZeptoMail HTTP ${res.status}: ${errBody}`;
+      } catch (err: any) {
+        diag = `ZeptoMail fetch failed: ${err?.message || String(err)}`;
+      }
+    }
+
     // 1. Cloudflare Native Email Routing (send_email binding)
     if (this.env?.EMAIL && typeof this.env.EMAIL.send === 'function') {
       try {
@@ -66,9 +102,9 @@ export class EmailService {
         }
 
         const rawMime = [
-          `From: "WibeChat Cloudflare Auth" <${fromEmail}>`,
+          `From: "VibeChat Cloudflare Auth" <${fromEmail}>`,
           `To: ${to}`,
-          `Subject: Your WibeChat Login OTP: ${otp}`,
+          `Subject: Your VibeChat login code`,
           `MIME-Version: 1.0`,
           `Content-Type: text/html; charset=utf-8`,
           `Content-Transfer-Encoding: 8bit`,
@@ -79,11 +115,15 @@ export class EmailService {
         if (EmailMessageClass) {
           const message = new EmailMessageClass(fromEmail, to, rawMime);
           await this.env.EMAIL.send(message);
-          return { sent: true, method: 'cloudflare_email_routing', previewCode: otp };
+          return { sent: true, method: 'cloudflare_email_routing', previewCode: isDev ? otp : undefined };
         }
-      } catch (cfErr) {
+        diag = (diag ? diag + ' | ' : '') + 'cloudflare:email module resolved but EmailMessage class unavailable';
+      } catch (cfErr: any) {
+        diag = (diag ? diag + ' | ' : '') + `EMAIL.send failed: ${cfErr?.message || String(cfErr)}`;
         console.warn('Cloudflare Email Routing send error:', cfErr);
       }
+    } else {
+      diag = (diag ? diag + ' | ' : '') + 'EMAIL send_email binding missing on this deployment';
     }
 
     // 2. Fallback to Resend if configured by user
@@ -96,25 +136,26 @@ export class EmailService {
             'Content-Type': 'application/json',
           },
           body: JSON.stringify({
-            from: fromEmail.includes('@') ? fromEmail : `WibeChat <noreply@bytenex.io>`,
+            from: fromEmail.includes('@') ? fromEmail : `VibeChat <noreply@bytenex.io>`,
             to: [to],
-            subject: `Your WibeChat Login Code: ${otp}`,
+            subject: `Your VibeChat login code`,
             html: htmlContent,
           }),
         });
         if (res.ok) {
-          return { sent: true, method: 'resend', previewCode: otp };
+          return { sent: true, method: 'resend', previewCode: isDev ? otp : undefined };
         }
       } catch (err) {
         console.warn('Resend email fallback error:', err);
       }
     }
 
-    // 3. Cloudflare Dev / Sandbox mode (logs to console & provides instant OTP for dev testing)
-    return {
-      sent: true,
-      method: 'cloudflare_dev_preview',
-      previewCode: otp,
-    };
+    // 3. No email provider delivered the code. In development, surface the
+    // preview code so local login still works. In production, report the
+    // failure honestly instead of leaking the OTP in the API response.
+    if (isDev) {
+      return { sent: true, method: 'cloudflare_dev_preview', previewCode: otp };
+    }
+    return { sent: false, method: 'no_email_provider_configured', diag };
   }
 }
