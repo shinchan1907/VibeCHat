@@ -58,6 +58,7 @@ export const api = {
         body: JSON.stringify({ email, code }),
       }),
     getMe: () => request<{ success: boolean; user: any }>('/auth/me'),
+    checkCfAccess: () => request<{ success: boolean; token?: string; user?: any; method?: string }>('/auth/cf-access'),
     logout: () => request<{ success: boolean }>('/auth/logout', { method: 'POST' }),
   },
 

@@ -4,6 +4,7 @@ export interface Env {
   ADMIN_EMAIL?: string;
   ENVIRONMENT?: string;
   ASSETS?: Fetcher;
+  EMAIL?: any; // Cloudflare Email Routing send_email binding
 }
 
 export interface WabaSettings {

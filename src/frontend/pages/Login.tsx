@@ -1,13 +1,14 @@
 import React, { useState } from 'react';
 import { useAuth } from '../context/AuthContext';
-import { Mail, ArrowRight, KeyRound, AlertCircle, CheckCircle2 } from 'lucide-react';
+import { Mail, ArrowRight, KeyRound, AlertCircle, CheckCircle2, Shield } from 'lucide-react';
 
 export const Login: React.FC = () => {
-  const { requestOtp, verifyOtp } = useAuth();
+  const { requestOtp, verifyOtp, loginWithCfAccess } = useAuth();
   const [email, setEmail] = useState('contact@bytenex.io');
   const [otp, setOtp] = useState('');
   const [step, setStep] = useState<'email' | 'otp'>('email');
   const [loading, setLoading] = useState(false);
+  const [cfLoading, setCfLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [previewOtp, setPreviewOtp] = useState<string | null>(null);
 
@@ -43,6 +44,21 @@ export const Login: React.FC = () => {
       setError(err.message || 'Invalid or expired OTP code. Please try again.');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleCfAccessLogin = async () => {
+    setError(null);
+    setCfLoading(true);
+    try {
+      const ok = await loginWithCfAccess();
+      if (!ok) {
+        setError('No Cloudflare Access Zero Trust session detected. Enter your email below to receive an OTP via Cloudflare Email Routing.');
+      }
+    } catch (err: any) {
+      setError(err.message || 'Cloudflare Access verification failed. Use email OTP below.');
+    } finally {
+      setCfLoading(false);
     }
   };
 
@@ -122,6 +138,44 @@ export const Login: React.FC = () => {
             </div>
             <div>
               One-Time Password: <strong style={{ letterSpacing: '2px' }}>{previewOtp}</strong> (Auto-filled below)
+            </div>
+          </div>
+        )}
+
+        {/* Cloudflare Access Zero Trust OTP Button */}
+        {step === 'email' && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '14px', marginBottom: '20px' }}>
+            <button
+              type="button"
+              onClick={handleCfAccessLogin}
+              disabled={cfLoading}
+              style={{
+                width: '100%',
+                padding: '11px 16px',
+                borderRadius: 'var(--radius-sm)',
+                border: '1.5px solid #f4a860',
+                background: '#fffaf5',
+                color: '#c2410c',
+                fontWeight: 700,
+                fontSize: '13px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: '8px',
+                cursor: 'pointer',
+                transition: 'all 0.15s ease',
+              }}
+            >
+              <Shield size={16} style={{ color: '#ea580c' }} />
+              <span>{cfLoading ? 'Checking Cloudflare Edge...' : 'Sign In with Cloudflare Access (Zero Trust OTP)'}</span>
+            </button>
+
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+              <div style={{ flex: 1, height: '1px', background: 'var(--border-light)' }} />
+              <span style={{ fontSize: '11px', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.8px', fontWeight: 600 }}>
+                Or Cloudflare Email Routing OTP
+              </span>
+              <div style={{ flex: 1, height: '1px', background: 'var(--border-light)' }} />
             </div>
           </div>
         )}

@@ -14,6 +14,7 @@ interface AuthContextType {
   isLoading: boolean;
   requestOtp: (email: string) => Promise<{ success: boolean; previewCode?: string; message: string }>;
   verifyOtp: (email: string, code: string) => Promise<boolean>;
+  loginWithCfAccess: () => Promise<boolean>;
   logout: () => void;
 }
 
@@ -26,6 +27,21 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   useEffect(() => {
     const checkAuth = async () => {
+      // 1. Check if Cloudflare Access Zero Trust OTP has already verified this admin session
+      try {
+        const cfRes = await api.auth.checkCfAccess();
+        if (cfRes.success && cfRes.user && cfRes.token) {
+          localStorage.setItem('waba_token', cfRes.token);
+          setToken(cfRes.token);
+          setUser(cfRes.user);
+          setIsLoading(false);
+          return;
+        }
+      } catch {
+        // Not accessed via Cloudflare Access Zero Trust or headers not present
+      }
+
+      // 2. Standard token verification
       const storedToken = localStorage.getItem('waba_token');
       if (!storedToken) {
         setIsLoading(false);
@@ -77,6 +93,21 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
+  const loginWithCfAccess = async () => {
+    try {
+      const res = await api.auth.checkCfAccess();
+      if (res.success && res.token && res.user) {
+        localStorage.setItem('waba_token', res.token);
+        setToken(res.token);
+        setUser(res.user);
+        return true;
+      }
+      return false;
+    } catch (err) {
+      throw err;
+    }
+  };
+
   const logout = () => {
     api.auth.logout().catch(() => {});
     localStorage.removeItem('waba_token');
@@ -93,6 +124,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         isLoading,
         requestOtp,
         verifyOtp,
+        loginWithCfAccess,
         logout,
       }}
     >

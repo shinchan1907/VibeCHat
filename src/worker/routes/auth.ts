@@ -32,7 +32,7 @@ authRouter.post('/send-otp', async (c) => {
 
   // Retrieve settings for email dispatch
   const settings = await c.env.DB.prepare('SELECT * FROM waba_settings WHERE id = "default"').first<WabaSettings>();
-  const emailService = new EmailService(settings || { id: 'default' });
+  const emailService = new EmailService(settings || { id: 'default' }, c.env);
   const result = await emailService.sendOtpEmail(email, code);
 
   // Log activity
@@ -109,9 +109,70 @@ authRouter.post('/verify-otp', async (c) => {
 });
 
 /**
+ * Cloudflare Access (Zero Trust) Inbuilt OTP Session Issuance
+ */
+authRouter.get('/cf-access', async (c) => {
+  const cfEmail = c.req.header('cf-access-authenticated-user-email');
+  const cfJwt = c.req.header('cf-access-jwt-assertion');
+  const adminEmail = c.env.ADMIN_EMAIL || ALLOWED_ADMIN_EMAIL;
+
+  if (cfEmail && cfEmail.trim().toLowerCase() === adminEmail.toLowerCase()) {
+    // Cloudflare Zero Trust Inbuilt OTP has already authenticated this user!
+    const token = `sess_cf_${crypto.randomUUID().replace(/-/g, '')}_${Date.now()}`;
+    const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+
+    await c.env.DB.prepare(
+      'INSERT INTO sessions (token, email, expires_at) VALUES (?, ?, ?)'
+    ).bind(token, cfEmail.toLowerCase(), expiresAt).run();
+
+    await c.env.DB.prepare(
+      'INSERT INTO activity_logs (id, event_type, description, details) VALUES (?, ?, ?, ?)'
+    ).bind(
+      `log_${Date.now()}`,
+      'auth_cloudflare_access_login',
+      `Admin authenticated via Cloudflare Access Inbuilt OTP: ${cfEmail}`,
+      JSON.stringify({ method: 'cloudflare_zero_trust_otp', hasJwt: Boolean(cfJwt) })
+    ).run();
+
+    return c.json({
+      success: true,
+      token,
+      method: 'cloudflare_access_otp',
+      user: {
+        email: cfEmail.toLowerCase(),
+        name: 'ByteNex Admin',
+        role: 'admin',
+      },
+    });
+  }
+
+  return c.json({
+    success: false,
+    error: 'No active Cloudflare Access Zero Trust OTP session detected on this request.',
+  }, 401);
+});
+
+/**
  * Get Current Session / Me
  */
 authRouter.get('/me', async (c) => {
+  const cfEmail = c.req.header('cf-access-authenticated-user-email');
+  const adminEmail = c.env.ADMIN_EMAIL || ALLOWED_ADMIN_EMAIL;
+
+  // 1. Direct Cloudflare Access Zero Trust edge verification
+  if (cfEmail && cfEmail.trim().toLowerCase() === adminEmail.toLowerCase()) {
+    return c.json({
+      success: true,
+      authenticatedBy: 'cloudflare_access_otp',
+      user: {
+        email: cfEmail.toLowerCase(),
+        name: 'ByteNex Admin',
+        role: 'admin',
+      },
+    });
+  }
+
+  // 2. Standard Session Token verification
   const authHeader = c.req.header('Authorization');
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
     return c.json({ success: false, error: 'Unauthorized' }, 401);

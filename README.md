@@ -58,9 +58,10 @@
 - Contact directory with tags, custom attributes, opt-in/opt-out status, and search.
 - Bulk CSV import for fast contact onboarding.
 
-### 7. 🔐 Single-Business Admin Auth
-- Enforced single-business administration locked to **`contact@bytenex.io`**.
-- Passwordless **Email OTP login** with 30-day cryptographically secured sessions stored in Cloudflare D1.
+### 7. 🔐 Cloudflare Inbuilt OTP & Admin Authentication
+- **Cloudflare Access (Zero Trust) Inbuilt OTP**: Seamlessly integrates with Cloudflare Access edge security. When placed behind Cloudflare Zero Trust, Cloudflare's edge automatically prompts for OTP via `no-reply@notify.cloudflare.com`, verifies the pin, and auto-authenticates `contact@bytenex.io` via cryptographic `Cf-Access-Jwt-Assertion` and `Cf-Access-Authenticated-User-Email` headers.
+- **Cloudflare Worker Native Email Routing (`send_email`)**: Dispatches OTP login emails directly through Cloudflare's internal email delivery infrastructure with zero third-party dependencies ($0 cost).
+- **Session Security**: 30-day cryptographically secured sessions stored in Cloudflare D1 with instant session revocation on logout.
 
 ---
 
