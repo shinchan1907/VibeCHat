@@ -314,11 +314,11 @@ def main():
     step("Custom domain")
     ensure_custom_domain(account_id)
 
-    step("Cron schedule (broadcast retries every 30 min)")
+    step("Cron schedule (broadcast queue + retries every minute)")
     try:
         api("PUT", f"/accounts/{account_id}/workers/scripts/{SCRIPT_NAME}/schedules",
-            [{"cron": "*/30 * * * *"}])
-        ok("cron schedule set: */30 * * * *")
+            [{"cron": "* * * * *"}])
+        ok("cron schedule set: * * * * *")
     except Exception as e:
         warn(f"could not set cron schedule ({str(e)[:140]}) — broadcast retries will not run until it is set")
 

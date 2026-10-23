@@ -119,7 +119,7 @@ export const api = {
     list: () => request<{ success: boolean; broadcasts: any[] }>('/broadcasts'),
     get: (id: string) => request<{ success: boolean; broadcast: any; recipients: any[] }>(`/broadcasts/${id}`),
     create: (payload: any) =>
-      request<{ success: boolean; broadcast_id: string; total_recipients: number; sent_count: number; failed_count: number }>(
+      request<{ success: boolean; broadcast_id: string; total_recipients: number; queued?: boolean; duplicate?: boolean }>(
         '/broadcasts',
         {
           method: 'POST',

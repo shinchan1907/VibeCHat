@@ -168,6 +168,11 @@ export const Broadcasts: React.FC = () => {
       });
 
       if (res.success) {
+        if ((res as any).duplicate) {
+          alert('This exact campaign is already sending — the duplicate launch was ignored.');
+        } else {
+          alert(`Campaign queued for ${(res as any).total_recipients} recipients. Sending runs in the background — you can close this page; progress updates live in the list below.`);
+        }
         setShowCreateModal(false);
         setCampaignName('');
         setSelectedTemplateId('');

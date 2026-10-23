@@ -12,7 +12,7 @@ import { contactsRouter } from './routes/contacts';
 import { settingsRouter } from './routes/settings';
 import { mediaRouter } from './routes/media';
 import { botsRouter } from './routes/bots';
-import { runBroadcastRetries } from './routes/broadcasts';
+import { runBroadcastRetries, processBroadcastQueue } from './routes/broadcasts';
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -133,6 +133,9 @@ export default {
   // Cron (every 30 min, registered by scripts/deploy.py): retry failed
   // broadcast messages inside their retry window.
   async scheduled(_event: any, env: Env, ctx: any) {
-    ctx.waitUntil(runBroadcastRetries(env));
+    ctx.waitUntil((async () => {
+      await processBroadcastQueue(env);
+      await runBroadcastRetries(env);
+    })());
   },
 };

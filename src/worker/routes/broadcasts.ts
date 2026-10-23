@@ -299,7 +299,20 @@ broadcastsRouter.post('/', async (c) => {
     return c.json({ success: false, error: 'No opted-in contacts match the selected target criteria' }, 400);
   }
 
-  // Create Broadcast Campaign record
+  // Idempotency guard: an identical campaign already queued/processing in
+  // the last 10 minutes is returned instead of creating a duplicate (this is
+  // what produced twin campaigns when a launch was double-submitted).
+  const dupe = await c.env.DB.prepare(
+    `SELECT id FROM broadcasts WHERE name = ? AND template_id = ? AND status IN ("queued", "processing")
+       AND datetime(created_at) >= datetime('now', '-10 minutes') ORDER BY created_at DESC LIMIT 1`
+  ).bind(payload.name, template.id).first<any>();
+  if (dupe) {
+    return c.json({ success: true, broadcast_id: dupe.id, duplicate: true, total_recipients: targetContacts.length, queued: true });
+  }
+
+  // Create the campaign as QUEUED and queue every recipient. Dispatch happens
+  // in the background via the cron-driven queue processor, so the launch
+  // request returns instantly and sending survives browser disconnects.
   const broadcastId = `bcast_${Date.now()}_${Math.random().toString(36).substring(7)}`;
   const nowIso = new Date().toISOString();
 
@@ -308,7 +321,7 @@ broadcastsRouter.post('/', async (c) => {
       id, name, template_id, template_name, template_language,
       variable_mappings, status, total_recipients, target_tags,
       started_at, created_at
-    ) VALUES (?, ?, ?, ?, ?, ?, "processing", ?, ?, ?, ?)`
+    ) VALUES (?, ?, ?, ?, ?, ?, "queued", ?, ?, ?, ?)`
   ).bind(
     broadcastId,
     payload.name,
@@ -329,120 +342,130 @@ broadcastsRouter.post('/', async (c) => {
     'INSERT INTO broadcast_send_config (broadcast_id, header_media_id, retry_enabled, retry_window_hours) VALUES (?, ?, ?, ?)'
   ).bind(broadcastId, payload.header_media_id || null, payload.retry_enabled ? 1 : 0, payload.retry_enabled ? retryWindow : 0).run();
 
-  // Load WABA settings for dispatch
-  const settings = await c.env.DB.prepare('SELECT * FROM waba_settings WHERE id = "default"').first<WabaSettings>();
-  const metaApi = new MetaApiService(settings || { id: 'default' });
-
-  let sentSuccessCount = 0;
-  let failedCount = 0;
-
-  // Dispatch sequentially or batch
-  for (const contact of targetContacts) {
-    const recipientId = `br_${Date.now()}_${Math.random().toString(36).substring(7)}`;
-
-    // Personalize {{name}} per recipient, then build components
-    const personalVars = (payload.variables || []).map((v) => (v === '{{name}}' ? (contact.name || 'Customer') : v));
-    const personalizedComponents = buildTemplateComponents(template, personalVars, payload.header_media_id);
-
-    const sendRes = await metaApi.sendMessage({
-      to: contact.phone_number,
-      type: 'template',
-      template: {
-        name: template.name,
-        language: { code: template.language || 'en_US' },
-        components: personalizedComponents.length > 0 ? personalizedComponents : undefined,
-      },
-    });
-
-    const isSuccess = sendRes.success;
-    const recipientStatus = isSuccess ? 'sent' : 'failed';
-    const errorMsg = isSuccess ? null : (sendRes.error || 'Failed to dispatch');
-
-    if (isSuccess) sentSuccessCount++;
-    else failedCount++;
-
-    await c.env.DB.prepare(
-      `INSERT INTO broadcast_recipients (
-        id, broadcast_id, contact_id, phone_number, status, wamid, error_message, sent_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
-    ).bind(
-      recipientId,
-      broadcastId,
-      contact.id,
-      contact.phone_number,
-      recipientStatus,
-      sendRes.wamid || null,
-      errorMsg,
-      isSuccess ? new Date().toISOString() : null
-    ).run();
-
-    // Ensure conversation exists and record sent message in inbox
-    let conv = await c.env.DB.prepare('SELECT id FROM conversations WHERE contact_id = ?').bind(contact.id).first<any>();
-    if (!conv) {
-      const convId = `cnv_${Date.now()}_${Math.random().toString(36).substring(7)}`;
-      await c.env.DB.prepare(
-        'INSERT INTO conversations (id, contact_id, contact_phone, contact_name, last_message_text, last_message_at, unread_count, status) VALUES (?, ?, ?, ?, ?, ?, 0, "open")'
-      ).bind(
-        convId,
-        contact.id,
-        contact.phone_number,
-        contact.name,
-        `📄 Broadcast: ${template.name}`,
-        nowIso
-      ).run();
-      conv = { id: convId };
-    } else {
-      await c.env.DB.prepare(
-        'UPDATE conversations SET last_message_text = ?, last_message_at = ?, updated_at = ? WHERE id = ?'
-      ).bind(`📄 Broadcast: ${template.name}`, nowIso, nowIso, conv.id).run();
-    }
-
-    // Insert message into chat history
-    const msgId = `msg_${Date.now()}_${Math.random().toString(36).substring(7)}`;
-    await c.env.DB.prepare(
-      `INSERT INTO messages (
-        id, conversation_id, wamid, direction, type, content, status, raw_payload, created_at
-      ) VALUES (?, ?, ?, "outbound", "template", ?, ?, ?, ?)`
-    ).bind(
-      msgId,
-      conv.id,
-      sendRes.wamid || null,
-      renderTemplateContent(template, personalVars, contact.name),
-      recipientStatus,
-      JSON.stringify(sendRes.raw || {}),
-      nowIso
-    ).run();
+  // Queue recipients in batched writes
+  const QCHUNK = 100;
+  for (let i = 0; i < targetContacts.length; i += QCHUNK) {
+    const slice = targetContacts.slice(i, i + QCHUNK);
+    await c.env.DB.batch(slice.map((contact) => c.env.DB.prepare(
+      'INSERT INTO broadcast_recipients (id, broadcast_id, contact_id, phone_number, status) VALUES (?, ?, ?, ?, "queued")'
+    ).bind(`br_${Date.now()}_${Math.random().toString(36).substring(7)}`, broadcastId, contact.id, contact.phone_number)));
   }
 
-  // Update broadcast summary
-  const completedIso = new Date().toISOString();
-  await c.env.DB.prepare(
-    `UPDATE broadcasts SET 
-      status = "completed",
-      sent_count = ?,
-      failed_count = ?,
-      completed_at = ?
-     WHERE id = ?`
-  ).bind(sentSuccessCount, failedCount, completedIso, broadcastId).run();
-
-  // Log activity
   await c.env.DB.prepare(
     'INSERT INTO activity_logs (id, event_type, description, details) VALUES (?, ?, ?, ?)'
   ).bind(
     `log_${Date.now()}`,
-    'broadcast_dispatched',
-    `Campaign "${payload.name}" dispatched to ${targetContacts.length} recipients`,
-    JSON.stringify({ broadcastId, sent: sentSuccessCount, failed: failedCount })
+    'broadcast_queued',
+    `Campaign "${payload.name}" queued for ${targetContacts.length} recipients (background dispatch)`,
+    JSON.stringify({ broadcastId })
   ).run();
 
   return c.json({
     success: true,
     broadcast_id: broadcastId,
     total_recipients: targetContacts.length,
-    sent_count: sentSuccessCount,
-    failed_count: failedCount,
+    queued: true,
   });
 });
+
+/**
+ * Background queue processor (cron, every minute): sends QUEUED broadcast
+ * recipients in batches. Each send updates the recipient row, the chat
+ * timeline and the campaign counters incrementally, so progress is real and
+ * a campaign can never be lost mid-dispatch.
+ */
+export async function processBroadcastQueue(env: Env): Promise<void> {
+  const db: any = (env as any).DB;
+  const due: any = await db.prepare(
+    `SELECT br.id AS recipient_id, br.broadcast_id, br.contact_id, br.phone_number,
+            b.template_id, b.variable_mappings, b.status AS bstatus, cfg.header_media_id
+     FROM broadcast_recipients br
+     JOIN broadcasts b ON b.id = br.broadcast_id
+     LEFT JOIN broadcast_send_config cfg ON cfg.broadcast_id = br.broadcast_id
+     WHERE br.status = 'queued'
+     ORDER BY br.rowid ASC
+     LIMIT 60`
+  ).all();
+  const rows = due.results || [];
+
+  if (rows.length > 0) {
+    const settings = await db.prepare('SELECT * FROM waba_settings WHERE id = "default"').first() as any;
+    if (!settings?.access_token) return;
+    const metaApi = new MetaApiService(settings as WabaSettings);
+    const touchedBroadcasts = new Set<string>();
+
+    for (const row of rows) {
+      const template = await db.prepare('SELECT * FROM templates WHERE id = ?').bind(row.template_id).first() as any;
+      const contact = await db.prepare('SELECT * FROM contacts WHERE id = ?').bind(row.contact_id).first() as any;
+      const nowIso = new Date().toISOString();
+      let isSuccess = false;
+      let wamid: string | null = null;
+      let errorMsg: string | null = template ? null : 'Template no longer exists';
+
+      if (template && contact) {
+        const variables: string[] = typeof row.variable_mappings === 'string' ? JSON.parse(row.variable_mappings || '[]') : (row.variable_mappings || []);
+        const personalVars = variables.map((v: string) => (v === '{{name}}' ? (contact.name || 'Customer') : v));
+        const components = buildTemplateComponents(template, personalVars, row.header_media_id || undefined);
+        const sendRes = await metaApi.sendMessage({
+          to: row.phone_number,
+          type: 'template',
+          template: {
+            name: template.name,
+            language: { code: template.language || 'en_US' },
+            components: components.length > 0 ? components : undefined,
+          },
+        });
+        isSuccess = sendRes.success;
+        wamid = sendRes.wamid || null;
+        errorMsg = isSuccess ? null : (sendRes.error || 'Failed to dispatch');
+
+        if (isSuccess && contact) {
+          // Record in the chat timeline with the full rendered template
+          let conv = await db.prepare('SELECT id FROM conversations WHERE contact_id = ?').bind(contact.id).first() as any;
+          if (!conv) {
+            const convId = `cnv_${Date.now()}_${Math.random().toString(36).substring(7)}`;
+            await db.prepare(
+              'INSERT INTO conversations (id, contact_id, contact_phone, contact_name, last_message_text, last_message_at, unread_count, status) VALUES (?, ?, ?, ?, ?, ?, 0, "open")'
+            ).bind(convId, contact.id, contact.phone_number, contact.name, `📄 Broadcast: ${template.name}`, nowIso).run();
+            conv = { id: convId };
+          } else {
+            await db.prepare('UPDATE conversations SET last_message_text = ?, last_message_at = ?, updated_at = ? WHERE id = ?')
+              .bind(`📄 Broadcast: ${template.name}`, nowIso, nowIso, conv.id).run();
+          }
+          await db.prepare(
+            `INSERT INTO messages (id, conversation_id, wamid, direction, type, content, status, raw_payload, created_at)
+             VALUES (?, ?, ?, "outbound", "template", ?, "sent", ?, ?)`
+          ).bind(
+            `msg_${Date.now()}_${Math.random().toString(36).substring(7)}`,
+            conv.id,
+            wamid,
+            renderTemplateContent(template, personalVars, contact.name),
+            JSON.stringify(sendRes.raw || {}),
+            nowIso
+          ).run();
+        }
+      }
+
+      await db.prepare('UPDATE broadcast_recipients SET status = ?, wamid = ?, error_message = ?, sent_at = ? WHERE id = ?')
+        .bind(isSuccess ? 'sent' : 'failed', wamid, errorMsg, isSuccess ? nowIso : null, row.recipient_id).run();
+      await db.prepare(
+        `UPDATE broadcasts SET ${isSuccess ? 'sent_count = sent_count + 1' : 'failed_count = failed_count + 1'},
+           status = CASE WHEN status = 'queued' THEN 'processing' ELSE status END
+         WHERE id = ?`
+      ).bind(row.broadcast_id).run();
+      touchedBroadcasts.add(row.broadcast_id);
+    }
+
+    // Flip campaigns whose queue has drained to completed
+    for (const bid of touchedBroadcasts) {
+      const remaining = await db.prepare('SELECT COUNT(*) AS n FROM broadcast_recipients WHERE broadcast_id = ? AND status = "queued"').bind(bid).first() as any;
+      if ((remaining?.n || 0) === 0) {
+        await db.prepare('UPDATE broadcasts SET status = "completed", completed_at = ? WHERE id = ? AND status != "completed"')
+          .bind(new Date().toISOString(), bid).run();
+      }
+    }
+  }
+}
 
 /**
  * Cron-driven retry engine: re-sends FAILED broadcast messages while the
