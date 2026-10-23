@@ -5,6 +5,19 @@ import { MetaApiService } from '../services/meta-api';
 export const chatsRouter = new Hono<{ Bindings: Env }>();
 
 /**
+ * Timestamps in D1 exist in two shapes: SQLite CURRENT_TIMESTAMP
+ * ('YYYY-MM-DD HH:MM:SS', UTC) written by DB defaults, and JS ISO strings
+ * ('...T...Z') written by the worker. Normalise everything to ISO UTC so the
+ * browser parses it as UTC (a bare space-format string is parsed as LOCAL
+ * time, which shifted displayed times by the timezone offset), and always
+ * ORDER BY datetime(...) so the two shapes sort by instant, not by string.
+ */
+export function normalizeTs(ts: string | null | undefined): string | null {
+  if (!ts) return null;
+  return ts.includes('T') ? ts : ts.replace(' ', 'T') + 'Z';
+}
+
+/**
  * List all conversations with 24-hour customer service window status
  */
 chatsRouter.get('/', async (c) => {
@@ -34,7 +47,7 @@ chatsRouter.get('/', async (c) => {
     params.push(searchPattern, searchPattern, searchPattern);
   }
 
-  sql += ' ORDER BY c.is_pinned DESC, c.last_message_at DESC LIMIT 100';
+  sql += ' ORDER BY c.is_pinned DESC, datetime(c.last_message_at) DESC LIMIT 100';
 
   const rows = await c.env.DB.prepare(sql).bind(...params).all<any>();
   const now = Date.now();
@@ -45,7 +58,7 @@ chatsRouter.get('/', async (c) => {
     let windowSecondsRemaining = 0;
 
     if (conv.last_customer_message_at) {
-      const customerMsgTime = new Date(conv.last_customer_message_at).getTime();
+      const customerMsgTime = new Date(normalizeTs(conv.last_customer_message_at)).getTime();
       const expiresAt = customerMsgTime + 24 * 60 * 60 * 1000;
       if (expiresAt > now) {
         isWindowOpen = true;
@@ -56,6 +69,10 @@ chatsRouter.get('/', async (c) => {
 
     return {
       ...conv,
+      last_message_at: normalizeTs(conv.last_message_at),
+      last_customer_message_at: normalizeTs(conv.last_customer_message_at),
+      created_at: normalizeTs(conv.created_at),
+      updated_at: normalizeTs(conv.updated_at),
       tags: typeof conv.tags === 'string' ? JSON.parse(conv.tags || '[]') : (conv.tags || []),
       is_window_open: isWindowOpen,
       window_expires_at: windowExpiresAt,
@@ -78,13 +95,19 @@ chatsRouter.get('/:id/messages', async (c) => {
   }
 
   const messages = await c.env.DB.prepare(
-    'SELECT * FROM messages WHERE conversation_id = ? ORDER BY created_at ASC LIMIT 300'
+    'SELECT * FROM messages WHERE conversation_id = ? ORDER BY datetime(created_at) ASC LIMIT 300'
   ).bind(conversationId).all<any>();
 
   return c.json({
     success: true,
-    conversation: conv,
-    messages: messages.results || [],
+    conversation: {
+      ...conv,
+      last_message_at: normalizeTs(conv.last_message_at),
+      last_customer_message_at: normalizeTs(conv.last_customer_message_at),
+      created_at: normalizeTs(conv.created_at),
+      updated_at: normalizeTs(conv.updated_at),
+    },
+    messages: (messages.results || []).map((m: any) => ({ ...m, created_at: normalizeTs(m.created_at) })),
   });
 });
 
@@ -193,7 +216,7 @@ chatsRouter.post('/:id/read', async (c) => {
 
   // Find last inbound message to send read receipt to Meta
   const lastInbound = await c.env.DB.prepare(
-    'SELECT wamid FROM messages WHERE conversation_id = ? AND direction = "inbound" AND wamid IS NOT NULL ORDER BY created_at DESC LIMIT 1'
+    'SELECT wamid FROM messages WHERE conversation_id = ? AND direction = "inbound" AND wamid IS NOT NULL ORDER BY datetime(created_at) DESC LIMIT 1'
   ).bind(conversationId).first<any>();
 
   if (lastInbound?.wamid) {

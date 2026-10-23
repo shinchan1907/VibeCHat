@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { api } from '../lib/api';
 import {
   Bot,
   Plus,
@@ -48,7 +49,7 @@ export const ChatbotBuilder: React.FC = () => {
   const loadBots = async () => {
     try {
       setLoading(true);
-      const res = await fetch('/api/bots').then((r) => r.json());
+      const res = await api.bots.list();
       if (res.success && res.bots?.length > 0) {
         setBots(res.bots);
         setActiveBot(res.bots[0]);
@@ -115,17 +116,13 @@ export const ChatbotBuilder: React.FC = () => {
     if (!activeBot) return;
     try {
       setSaving(true);
-      await fetch('/api/bots', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          id: activeBot.id,
-          name: activeBot.name,
-          description: activeBot.description,
-          trigger_type: activeBot.trigger_type || 'keyword',
-          trigger_keywords: activeBot.trigger_keywords || [],
-          nodes,
-        }),
+      await api.bots.save({
+        id: activeBot.id,
+        name: activeBot.name,
+        description: activeBot.description,
+        trigger_type: activeBot.trigger_type || 'keyword',
+        trigger_keywords: activeBot.trigger_keywords || [],
+        nodes,
       });
       alert('Chatbot workflow successfully saved and live on Cloudflare Worker!');
       loadBots();
@@ -141,14 +138,10 @@ export const ChatbotBuilder: React.FC = () => {
     if (!testInput.trim() || !activeBot) return;
 
     try {
-      const res = await fetch('/api/bots/simulate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          bot_id: activeBot.id,
-          message: testInput,
-        }),
-      }).then((r) => r.json());
+      const res = await api.bots.simulate({
+        bot_id: activeBot.id,
+        message: testInput,
+      });
 
       if (res.success) {
         setSimLog(res.executionPath || []);

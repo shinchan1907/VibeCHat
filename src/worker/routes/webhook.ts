@@ -273,7 +273,7 @@ webhookRouter.post('/', async (c) => {
             // C. Insert Message
             const msgId = `msg_${Date.now()}_${Math.random().toString(36).substring(7)}`;
             await c.env.DB.prepare(
-              'INSERT INTO messages (id, conversation_id, wamid, direction, type, content, media_url, media_mime_type, media_caption, status, raw_payload) VALUES (?, ?, ?, "inbound", ?, ?, ?, ?, ?, "delivered", ?)'
+              'INSERT INTO messages (id, conversation_id, wamid, direction, type, content, media_url, media_mime_type, media_caption, status, raw_payload, created_at) VALUES (?, ?, ?, "inbound", ?, ?, ?, ?, ?, "delivered", ?, ?)'
             ).bind(
               msgId,
               conv.id,
@@ -283,7 +283,8 @@ webhookRouter.post('/', async (c) => {
               mediaUrl,
               mediaMime,
               mediaCaption,
-              JSON.stringify(msg)
+              JSON.stringify(msg),
+              nowIso
             ).run();
 
             // C2. Structured Flow submission capture (for the Flows page

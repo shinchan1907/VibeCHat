@@ -168,6 +168,24 @@ export const api = {
       request<{ success: boolean; meta?: string }>(`/flows/${id}`, { method: 'DELETE' }),
   },
 
+  bots: {
+    list: () => request<{ success: boolean; bots: any[] }>('/bots'),
+    save: (payload: any) =>
+      request<{ success: boolean; id: string }>('/bots', {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      }),
+    toggle: (id: string) =>
+      request<{ success: boolean; is_active: number }>(`/bots/${id}/toggle`, { method: 'POST' }),
+    remove: (id: string) =>
+      request<{ success: boolean }>(`/bots/${id}`, { method: 'DELETE' }),
+    simulate: (payload: { bot_id: string; message: string }) =>
+      request<{ success: boolean; executionPath?: any[]; reply?: any }>('/bots/simulate', {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      }),
+  },
+
   contacts: {
     list: (params?: { q?: string; tag?: string; opt_in?: string }) => {
       const q = new URLSearchParams();
