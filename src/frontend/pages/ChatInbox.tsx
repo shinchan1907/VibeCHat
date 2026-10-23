@@ -179,11 +179,12 @@ export const ChatInbox: React.FC = () => {
   // search results with the full list every 3.5 seconds.
   useEffect(() => {
     const interval = setInterval(() => {
+      if (document.visibilityState !== 'visible') return;
       loadConversations(true);
       if (activeConvId) {
         loadMessages(activeConvId, false);
       }
-    }, 3500);
+    }, 10000);
     return () => clearInterval(interval);
   }, [activeConvId, searchQuery, statusFilter]);
 

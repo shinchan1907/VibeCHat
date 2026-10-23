@@ -351,7 +351,7 @@ export const Broadcasts: React.FC = () => {
                           />
                         </div>
                         <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '4px' }}>
-                          📖 {readPct}% read • 💬 {b.replies_count || 0} replies • ❌ {failPct}% failed
+                          📖 {readPct}% read{typeof b.replies_count === 'number' ? ` • 💬 ${b.replies_count} replies` : ''} • ❌ {failPct}% failed
                           {b.retry_enabled ? <span> • 🔁 retry {b.retry_window_hours}h</span> : null}
                         </div>
                       </td>

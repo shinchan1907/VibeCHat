@@ -13,17 +13,12 @@ broadcastsRouter.get('/', async (c) => {
     'SELECT * FROM broadcasts ORDER BY created_at DESC LIMIT 50'
   ).all<any>();
 
-  // Reply counts per broadcast (recipients who replied after the send)
-  const replyRows: any = await c.env.DB.prepare(
-    `SELECT br.broadcast_id AS bid, COUNT(DISTINCT br.id) AS n
-     FROM broadcast_recipients br
-     JOIN broadcasts b ON b.id = br.broadcast_id
-     JOIN conversations cv ON cv.contact_phone = br.phone_number
-     JOIN messages m ON m.conversation_id = cv.id AND m.direction = 'inbound'
-       AND datetime(m.created_at) >= datetime(b.started_at)
-     GROUP BY br.broadcast_id`
-  ).all();
-  const replyMap = new Map<string, number>((replyRows.results || []).map((r: any) => [r.bid, r.n]));
+  // NOTE: per-broadcast reply counts used to be computed here with a
+  // recipients × conversations × messages join on EVERY list load — that
+  // single query burned through D1's free-tier daily row-read quota and
+  // took the whole app down on 2026-10-23. Reply counts now live only in
+  // the per-broadcast detail analytics (computed on demand, one campaign).
+  const replyMap = new Map<string, number>();
 
   const cfgRows: any = await c.env.DB.prepare('SELECT * FROM broadcast_send_config').all();
   const cfgMap = new Map<string, any>((cfgRows.results || []).map((r: any) => [r.broadcast_id, r]));
@@ -32,7 +27,7 @@ broadcastsRouter.get('/', async (c) => {
     ...b,
     variable_mappings: typeof b.variable_mappings === 'string' ? JSON.parse(b.variable_mappings || '[]') : (b.variable_mappings || []),
     target_tags: typeof b.target_tags === 'string' ? JSON.parse(b.target_tags || '[]') : (b.target_tags || []),
-    replies_count: replyMap.get(b.id) || 0,
+    replies_count: replyMap.get(b.id),
     retry_enabled: cfgMap.get(b.id)?.retry_enabled || 0,
     retry_window_hours: cfgMap.get(b.id)?.retry_window_hours || 0,
   }));
