@@ -99,6 +99,8 @@ export const ChatInbox: React.FC = () => {
   const lastMessagesSigRef = useRef('');
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  const sessionKeepRef = useRef<Set<string>>(new Set());
+
   const loadConversations = async (silent = false) => {
     try {
       const res = await api.chats.list({
@@ -106,7 +108,24 @@ export const ChatInbox: React.FC = () => {
         status: statusFilter === 'all' ? undefined : statusFilter,
       });
       if (res.success) {
-        setConversations(res.conversations);
+        // Remember every chat that arrived with unread messages, plus the
+        // open one. Once a chat is read it loses its unread-first rank and
+        // falls out of the 100-row page — without this retention the chat
+        // being read vanished from the list seconds after opening it.
+        res.conversations.forEach((c) => {
+          if (c.unread_count > 0) sessionKeepRef.current.add(c.id);
+        });
+        if (activeConvId) sessionKeepRef.current.add(activeConvId);
+        setConversations((prev) => {
+          const freshIds = new Set(res.conversations.map((c) => c.id));
+          const retained = prev
+            .filter((c) => sessionKeepRef.current.has(c.id) && !freshIds.has(c.id))
+            .slice(0, 25);
+          if (retained.length === 0) return res.conversations;
+          const unreadPart = res.conversations.filter((c) => c.unread_count > 0);
+          const restPart = res.conversations.filter((c) => !(c.unread_count > 0));
+          return [...unreadPart, ...retained, ...restPart];
+        });
         const totalUnread = res.conversations.reduce((acc, c) => acc + (c.unread_count || 0), 0);
         setUnreadCount(totalUnread);
 
