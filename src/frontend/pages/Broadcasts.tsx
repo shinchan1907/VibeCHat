@@ -47,6 +47,26 @@ export const Broadcasts: React.FC = () => {
   const [phoneNumbersInput, setPhoneNumbersInput] = useState('');
   const [templateVars, setTemplateVars] = useState<string[]>([]);
   const [dispatching, setDispatching] = useState(false);
+  const [headerMediaId, setHeaderMediaId] = useState('');
+  const [headerMediaName, setHeaderMediaName] = useState('');
+  const [headerUploading, setHeaderUploading] = useState(false);
+
+  const handleHeaderMediaUpload = async (file: File) => {
+    try {
+      setHeaderUploading(true);
+      const res = await api.broadcasts.uploadHeaderMedia(file);
+      if (res.success) {
+        setHeaderMediaId(res.media_id);
+        setHeaderMediaName(res.filename || file.name);
+      }
+    } catch (err: any) {
+      alert(err.message || 'Header media upload failed');
+      setHeaderMediaId('');
+      setHeaderMediaName('');
+    } finally {
+      setHeaderUploading(false);
+    }
+  };
 
   const loadData = async () => {
     try {
@@ -87,6 +107,12 @@ export const Broadcasts: React.FC = () => {
     e.preventDefault();
     if (!campaignName || !selectedTemplateId) return;
 
+    const tpl = templates.find((t) => t.id === selectedTemplateId);
+    if (tpl && ['IMAGE', 'VIDEO', 'DOCUMENT'].includes(tpl.header_type || '') && !headerMediaId) {
+      alert(`This template has a ${String(tpl.header_type).toLowerCase()} header — please upload the header media first.`);
+      return;
+    }
+
     try {
       setDispatching(true);
       let parsedNumbers: string[] = [];
@@ -104,6 +130,7 @@ export const Broadcasts: React.FC = () => {
         target_tags: selectedTags,
         phone_numbers: parsedNumbers,
         variables: templateVars,
+        header_media_id: headerMediaId || undefined,
       });
 
       if (res.success) {
@@ -112,6 +139,8 @@ export const Broadcasts: React.FC = () => {
         setSelectedTemplateId('');
         setPhoneNumbersInput('');
         setSelectedTags([]);
+        setHeaderMediaId('');
+        setHeaderMediaName('');
         loadData();
       }
     } catch (err: any) {
@@ -338,6 +367,8 @@ export const Broadcasts: React.FC = () => {
                 const found = templates.find((t) => t.id === e.target.value);
                 const matches = found?.body_text?.match(/{{\d+}}/g) || [];
                 setTemplateVars(new Array(matches.length).fill(''));
+                setHeaderMediaId('');
+                setHeaderMediaName('');
               }}
               required
               style={{ width: '100%' }}
@@ -381,6 +412,27 @@ export const Broadcasts: React.FC = () => {
                       />
                     </div>
                   ))}
+                </div>
+              )}
+
+              {['IMAGE', 'VIDEO', 'DOCUMENT'].includes(selectedTpl.header_type || '') && (
+                <div style={{ borderTop: '1px solid var(--border-light)', paddingTop: '8px', marginTop: '8px' }}>
+                  <div style={{ fontSize: '11px', fontWeight: 700, marginBottom: '4px' }}>
+                    Header {String(selectedTpl.header_type).toLowerCase()} (required for this template):
+                  </div>
+                  <input
+                    type="file"
+                    accept={selectedTpl.header_type === 'IMAGE' ? 'image/*' : selectedTpl.header_type === 'VIDEO' ? 'video/*' : '.pdf,.doc,.docx'}
+                    onChange={(e) => {
+                      const f = e.target.files?.[0];
+                      if (f) handleHeaderMediaUpload(f);
+                    }}
+                    style={{ width: '100%', fontSize: '12px' }}
+                  />
+                  {headerUploading && <div style={{ fontSize: '12px', marginTop: '4px' }}>Uploading to Meta…</div>}
+                  {headerMediaId && !headerUploading && (
+                    <div style={{ fontSize: '12px', marginTop: '4px', color: '#0a7d43' }}>✓ Attached: {headerMediaName}</div>
+                  )}
                 </div>
               )}
             </div>

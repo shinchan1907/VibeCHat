@@ -56,6 +56,39 @@ broadcastsRouter.get('/:id', async (c) => {
 });
 
 /**
+ * Upload header media for a broadcast to Meta (returns a media id that the
+ * template send references — no public URL needed).
+ */
+broadcastsRouter.post('/header-media', async (c) => {
+  const settings = await c.env.DB.prepare('SELECT * FROM waba_settings WHERE id = "default"').first<any>();
+  if (!settings?.access_token || !settings?.phone_number_id) {
+    return c.json({ success: false, error: 'WABA is not configured yet' }, 400);
+  }
+  const form = await c.req.formData().catch(() => null);
+  const file = form?.get('file');
+  if (!file || typeof file === 'string') {
+    return c.json({ success: false, error: 'No file uploaded' }, 400);
+  }
+  if (file.size > 16 * 1024 * 1024) {
+    return c.json({ success: false, error: 'Header media must be 16MB or smaller' }, 400);
+  }
+  const metaForm = new FormData();
+  metaForm.append('messaging_product', 'whatsapp');
+  metaForm.append('type', file.type || 'application/octet-stream');
+  metaForm.append('file', file, file.name || 'header-media');
+  const res = await fetch(`https://graph.facebook.com/v21.0/${settings.phone_number_id}/media`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${settings.access_token}` },
+    body: metaForm,
+  });
+  const data: any = await res.json().catch(() => ({}));
+  if (!res.ok || !data.id) {
+    return c.json({ success: false, error: data?.error?.message || 'Meta media upload failed' }, 502);
+  }
+  return c.json({ success: true, media_id: data.id, filename: file.name });
+});
+
+/**
  * Create and dispatch a broadcast campaign
  */
 broadcastsRouter.post('/', async (c) => {
@@ -66,6 +99,7 @@ broadcastsRouter.post('/', async (c) => {
     target_tags?: string[];
     phone_numbers?: string[]; // for manual or CSV paste
     variables?: string[];
+    header_media_id?: string; // Meta media id from POST /broadcasts/header-media
   }>();
 
   if (!payload.name || !payload.template_id) {
@@ -76,6 +110,12 @@ broadcastsRouter.post('/', async (c) => {
   const template = await c.env.DB.prepare('SELECT * FROM templates WHERE id = ?').bind(payload.template_id).first<any>();
   if (!template) {
     return c.json({ success: false, error: 'Selected template not found' }, 404);
+  }
+
+  // Media-header templates cannot be sent without a header media attachment.
+  const MEDIA_HEADER_TYPES = ['IMAGE', 'VIDEO', 'DOCUMENT'];
+  if (MEDIA_HEADER_TYPES.includes(template.header_type || '') && !payload.header_media_id) {
+    return c.json({ success: false, error: `This template has a ${String(template.header_type).toLowerCase()} header — upload the header media before launching the broadcast.` }, 400);
   }
 
   // Find recipients based on target_type
@@ -145,8 +185,15 @@ broadcastsRouter.post('/', async (c) => {
   const settings = await c.env.DB.prepare('SELECT * FROM waba_settings WHERE id = "default"').first<WabaSettings>();
   const metaApi = new MetaApiService(settings || { id: 'default' });
 
-  // Prepare template parameters
+  // Prepare template parameters (header component first when present)
   const templateComponents: any[] = [];
+  if (MEDIA_HEADER_TYPES.includes(template.header_type || '') && payload.header_media_id) {
+    const ht = String(template.header_type).toLowerCase(); // image | video | document
+    templateComponents.push({
+      type: 'header',
+      parameters: [{ type: ht, [ht]: { id: payload.header_media_id } }],
+    });
+  }
   if (payload.variables && payload.variables.length > 0) {
     templateComponents.push({
       type: 'body',
@@ -164,10 +211,12 @@ broadcastsRouter.post('/', async (c) => {
   for (const contact of targetContacts) {
     const recipientId = `br_${Date.now()}_${Math.random().toString(36).substring(7)}`;
 
-    // Build personalized parameters if {{name}} is used
+    // Build personalized parameters if {{name}} is used (body component only —
+    // a header component may now sit at index 0)
     const personalizedComponents = JSON.parse(JSON.stringify(templateComponents));
-    if (personalizedComponents[0]?.parameters) {
-      personalizedComponents[0].parameters = personalizedComponents[0].parameters.map((p: any) => ({
+    const bodyComp = personalizedComponents.find((comp: any) => comp.type === 'body');
+    if (bodyComp?.parameters) {
+      bodyComp.parameters = bodyComp.parameters.map((p: any) => ({
         ...p,
         text: p.text === '{{name}}' ? (contact.name || 'Customer') : p.text,
       }));

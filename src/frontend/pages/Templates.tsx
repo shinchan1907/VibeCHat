@@ -42,6 +42,27 @@ export const Templates: React.FC = () => {
   const [language, setLanguage] = useState('en_US');
   const [headerType, setHeaderType] = useState<'NONE' | 'TEXT' | 'IMAGE' | 'DOCUMENT' | 'VIDEO'>('NONE');
   const [headerContent, setHeaderContent] = useState('');
+  const [headerExampleText, setHeaderExampleText] = useState('');
+  const [headerHandle, setHeaderHandle] = useState('');
+  const [headerFileName, setHeaderFileName] = useState('');
+  const [headerUploading, setHeaderUploading] = useState(false);
+
+  const handleHeaderSampleUpload = async (file: File) => {
+    try {
+      setHeaderUploading(true);
+      const res = await api.templates.uploadHeaderExample(file);
+      if (res.success) {
+        setHeaderHandle(res.header_handle);
+        setHeaderFileName(res.filename || file.name);
+      }
+    } catch (err: any) {
+      alert(err.message || 'Sample upload failed — Meta could not accept the file.');
+      setHeaderHandle('');
+      setHeaderFileName('');
+    } finally {
+      setHeaderUploading(false);
+    }
+  };
   const [bodyText, setBodyText] = useState('Hello {{1}}, welcome to ByteNex! Your verification code is {{2}}.');
   const [footerText, setFooterText] = useState('Reply STOP to unsubscribe');
   const [buttons, setButtons] = useState<any[]>([]);
@@ -109,12 +130,20 @@ export const Templates: React.FC = () => {
 
     try {
       setCreating(true);
+      if (['IMAGE', 'VIDEO', 'DOCUMENT'].includes(headerType) && !headerHandle) {
+        alert('Please upload a sample file for the media header first — Meta requires one to approve the template.');
+        setCreating(false);
+        return;
+      }
+
       const res = await api.templates.create({
         name,
         category,
         language,
         header_type: headerType,
-        header_content: headerType === 'TEXT' ? headerContent : undefined,
+        header_content: headerType === 'TEXT' ? headerContent : headerType !== 'NONE' ? headerFileName : undefined,
+        header_example_handle: ['IMAGE', 'VIDEO', 'DOCUMENT'].includes(headerType) ? headerHandle : undefined,
+        header_example_text: headerType === 'TEXT' ? headerExampleText : undefined,
         body_text: bodyText,
         footer_text: footerText,
         buttons: buttons
@@ -345,6 +374,71 @@ export const Templates: React.FC = () => {
                 <option value="AUTHENTICATION">Authentication (OTPs & Codes)</option>
               </select>
             </div>
+          </div>
+
+          <div>
+            <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, marginBottom: '4px' }}>
+              Header (Optional)
+            </label>
+            <select
+              value={headerType}
+              onChange={(e) => {
+                setHeaderType(e.target.value as any);
+                setHeaderHandle('');
+                setHeaderFileName('');
+              }}
+              style={{ width: '100%' }}
+            >
+              <option value="NONE">No Header</option>
+              <option value="TEXT">Text Header</option>
+              <option value="IMAGE">Image Header</option>
+              <option value="VIDEO">Video Header</option>
+              <option value="DOCUMENT">Document Header</option>
+            </select>
+
+            {headerType === 'TEXT' && (
+              <div style={{ marginTop: '8px' }}>
+                <input
+                  type="text"
+                  placeholder="Header text, e.g. Sale is Live! {{1}}"
+                  value={headerContent}
+                  onChange={(e) => setHeaderContent(e.target.value)}
+                  style={{ width: '100%' }}
+                />
+                {headerContent.includes('{{1}}') && (
+                  <input
+                    type="text"
+                    placeholder="Sample value for {{1}} (Meta needs this to approve)"
+                    value={headerExampleText}
+                    onChange={(e) => setHeaderExampleText(e.target.value)}
+                    style={{ width: '100%', marginTop: '6px' }}
+                  />
+                )}
+              </div>
+            )}
+
+            {['IMAGE', 'VIDEO', 'DOCUMENT'].includes(headerType) && (
+              <div style={{ marginTop: '8px' }}>
+                <div style={{ fontSize: '11.5px', color: 'var(--text-muted)', marginBottom: '6px' }}>
+                  Upload a sample {headerType.toLowerCase()} — Meta needs one sample to approve the template. At broadcast time you can attach a different {headerType.toLowerCase()} for each campaign.
+                </div>
+                <input
+                  type="file"
+                  accept={headerType === 'IMAGE' ? 'image/*' : headerType === 'VIDEO' ? 'video/*' : '.pdf,.doc,.docx'}
+                  onChange={(e) => {
+                    const f = e.target.files?.[0];
+                    if (f) handleHeaderSampleUpload(f);
+                  }}
+                  style={{ width: '100%', fontSize: '12px' }}
+                />
+                {headerUploading && <div style={{ fontSize: '12px', marginTop: '4px' }}>Uploading sample to Meta…</div>}
+                {headerHandle && !headerUploading && (
+                  <div style={{ fontSize: '12px', marginTop: '4px', color: 'var(--accent-emerald, #0a7d43)' }}>
+                    ✓ Sample uploaded: {headerFileName}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
 
           <div>

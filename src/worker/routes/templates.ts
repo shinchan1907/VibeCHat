@@ -42,6 +42,61 @@ templatesRouter.get('/', async (c) => {
 /**
  * Sync templates from Meta Graph API
  */
+/**
+ * Upload a sample media file for a media-header template.
+ * Uses Meta's Resumable Upload API and returns the header_handle that the
+ * create-template call must include as example.header_handle.
+ */
+const FALLBACK_META_APP_ID = '1138477858311475'; // Bytenex_wa_app
+const MAX_HEADER_SAMPLE_BYTES = 16 * 1024 * 1024;
+
+templatesRouter.post('/header-example', async (c) => {
+  const settings = await c.env.DB.prepare('SELECT * FROM waba_settings WHERE id = "default"').first<any>();
+  if (!settings?.access_token) {
+    return c.json({ success: false, error: 'WABA is not configured yet' }, 400);
+  }
+  const form = await c.req.formData().catch(() => null);
+  const file = form?.get('file');
+  if (!file || typeof file === 'string') {
+    return c.json({ success: false, error: 'No file uploaded' }, 400);
+  }
+  if (file.size > MAX_HEADER_SAMPLE_BYTES) {
+    return c.json({ success: false, error: 'Sample file must be 16MB or smaller' }, 400);
+  }
+  const appId = settings.app_id || FALLBACK_META_APP_ID;
+  const token = settings.access_token;
+  const bytes = await file.arrayBuffer();
+
+  // 1. Create an upload session
+  const sessionUrl = `https://graph.facebook.com/v21.0/${appId}/uploads?` + new URLSearchParams({
+    file_name: file.name || 'header-sample',
+    file_length: String(file.size),
+    file_type: file.type || 'application/octet-stream',
+  }).toString();
+  const sessionRes = await fetch(sessionUrl, { method: 'POST', headers: { Authorization: `Bearer ${token}` } });
+  const sessionData: any = await sessionRes.json().catch(() => ({}));
+  if (!sessionRes.ok || !sessionData.id) {
+    return c.json({ success: false, error: sessionData?.error?.message || 'Could not start Meta upload session' }, 502);
+  }
+
+  // 2. Upload the bytes to the session
+  const uploadRes = await fetch(`https://graph.facebook.com/v21.0/${sessionData.id}`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      file_offset: '0',
+      'Content-Type': 'application/octet-stream',
+    },
+    body: bytes,
+  });
+  const uploadData: any = await uploadRes.json().catch(() => ({}));
+  if (!uploadRes.ok || !uploadData.h) {
+    return c.json({ success: false, error: uploadData?.error?.message || 'Meta sample upload failed' }, 502);
+  }
+
+  return c.json({ success: true, header_handle: uploadData.h, filename: file.name });
+});
+
 templatesRouter.post('/sync', async (c) => {
   const settings = await c.env.DB.prepare('SELECT * FROM waba_settings WHERE id = "default"').first<WabaSettings>();
   const metaApi = new MetaApiService(settings || { id: 'default' });
@@ -141,6 +196,8 @@ templatesRouter.post('/', async (c) => {
     language: string;
     header_type?: 'NONE' | 'TEXT' | 'IMAGE' | 'DOCUMENT' | 'VIDEO';
     header_content?: string;
+    header_example_handle?: string;
+    header_example_text?: string;
     body_text: string;
     footer_text?: string;
     buttons?: any[];
@@ -159,15 +216,26 @@ templatesRouter.post('/', async (c) => {
 
   if (payload.header_type && payload.header_type !== 'NONE') {
     if (payload.header_type === 'TEXT') {
-      components.push({
+      const headerComp: any = {
         type: 'HEADER',
         format: 'TEXT',
         text: payload.header_content || '',
-      });
+      };
+      // Meta requires a sample value when the header text uses {{1}}
+      if ((payload.header_content || '').includes('{{1}}')) {
+        headerComp.example = { header_text: [payload.header_example_text || 'Sample'] };
+      }
+      components.push(headerComp);
     } else {
+      // Meta rejects media-header templates without a sample media handle
+      // (obtained from POST /templates/header-example via resumable upload).
+      if (!payload.header_example_handle) {
+        return c.json({ success: false, error: 'Media header templates need a sample file. Upload one in the Header section first.' }, 400);
+      }
       components.push({
         type: 'HEADER',
         format: payload.header_type,
+        example: { header_handle: [payload.header_example_handle] },
       });
     }
   }

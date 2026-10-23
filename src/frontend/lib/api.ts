@@ -99,6 +99,14 @@ export const api = {
       return request<{ success: boolean; templates: any[] }>(`/templates?${q.toString()}`);
     },
     sync: () => request<{ success: boolean; count: number }>('/templates/sync', { method: 'POST' }),
+    uploadHeaderExample: (file: File) => {
+      const formData = new FormData();
+      formData.append('file', file);
+      return request<{ success: boolean; header_handle: string; filename: string }>('/templates/header-example', {
+        method: 'POST',
+        body: formData,
+      });
+    },
     create: (payload: any) =>
       request<{ success: boolean; template: any }>('/templates', {
         method: 'POST',
@@ -118,6 +126,14 @@ export const api = {
           body: JSON.stringify(payload),
         }
       ),
+    uploadHeaderMedia: (file: File) => {
+      const formData = new FormData();
+      formData.append('file', file);
+      return request<{ success: boolean; media_id: string; filename: string }>('/broadcasts/header-media', {
+        method: 'POST',
+        body: formData,
+      });
+    },
   },
 
   flows: {
