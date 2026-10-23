@@ -47,7 +47,10 @@ chatsRouter.get('/', async (c) => {
     params.push(searchPattern, searchPattern, searchPattern);
   }
 
-  sql += ' ORDER BY c.is_pinned DESC, datetime(c.last_message_at) DESC LIMIT 100';
+  // Unread conversations (customer replies waiting) always surface first —
+  // with 1000+ broadcast conversations, a replied chat otherwise sits
+  // hundreds of rows below the broadcast flood and never gets seen.
+  sql += ' ORDER BY c.is_pinned DESC, (c.unread_count > 0) DESC, datetime(c.last_message_at) DESC LIMIT 100';
 
   const rows = await c.env.DB.prepare(sql).bind(...params).all<any>();
   const now = Date.now();

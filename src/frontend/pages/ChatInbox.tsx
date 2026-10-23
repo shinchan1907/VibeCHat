@@ -94,6 +94,9 @@ export const ChatInbox: React.FC = () => {
   };
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const messagesContainerRef = useRef<HTMLDivElement>(null);
+  const stickToBottomRef = useRef(true);
+  const lastMessagesSigRef = useRef('');
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const loadConversations = async (silent = false) => {
@@ -120,7 +123,14 @@ export const ChatInbox: React.FC = () => {
     try {
       const res = await api.chats.getMessages(convId);
       if (res.success) {
-        setMessages(res.messages);
+        // Skip the state update when nothing actually changed — the 3.5s poll
+        // otherwise re-renders the thread and yanked the scroll to the bottom
+        // while the user was reading older messages.
+        const sig = res.messages.map((m: any) => `${m.id}:${m.status}`).join('|');
+        if (sig !== lastMessagesSigRef.current) {
+          lastMessagesSigRef.current = sig;
+          setMessages(res.messages);
+        }
         if (markRead) {
           api.chats.markAsRead(convId).catch(() => {});
           setConversations((prev) =>
@@ -139,11 +149,15 @@ export const ChatInbox: React.FC = () => {
 
   useEffect(() => {
     if (activeConvId) {
+      lastMessagesSigRef.current = '';
+      stickToBottomRef.current = true;
       loadMessages(activeConvId);
     }
   }, [activeConvId]);
 
-  // Real-time polling
+  // Real-time polling. searchQuery/statusFilter are dependencies on purpose:
+  // without them the interval kept a stale closure and overwrote the user's
+  // search results with the full list every 3.5 seconds.
   useEffect(() => {
     const interval = setInterval(() => {
       loadConversations(true);
@@ -152,10 +166,14 @@ export const ChatInbox: React.FC = () => {
       }
     }, 3500);
     return () => clearInterval(interval);
-  }, [activeConvId]);
+  }, [activeConvId, searchQuery, statusFilter]);
 
+  // Only follow the tail when the user is already near the bottom; never
+  // yank the scroll while they are reading older messages.
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    if (stickToBottomRef.current) {
+      messagesEndRef.current?.scrollIntoView({ behavior: 'auto' });
+    }
   }, [messages]);
 
   useEffect(() => {
@@ -181,6 +199,7 @@ export const ChatInbox: React.FC = () => {
       });
 
       if (res.success) {
+        stickToBottomRef.current = true;
         setMessages((prev) => [...prev, res.message]);
         playNotificationSound();
         loadConversations(true);
@@ -212,6 +231,7 @@ export const ChatInbox: React.FC = () => {
         });
 
         if (sendRes.success) {
+          stickToBottomRef.current = true;
           setMessages((prev) => [...prev, sendRes.message]);
           loadConversations(true);
         }
@@ -260,6 +280,7 @@ export const ChatInbox: React.FC = () => {
       });
 
       if (res.success) {
+        stickToBottomRef.current = true;
         setMessages((prev) => [...prev, res.message]);
         setShowTemplateModal(false);
         setSelectedTemplate(null);
@@ -468,7 +489,14 @@ export const ChatInbox: React.FC = () => {
           </div>
 
           {/* Messages Stream */}
-          <div className="messages-container">
+          <div
+            className="messages-container"
+            ref={messagesContainerRef}
+            onScroll={(e) => {
+              const el = e.currentTarget;
+              stickToBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 150;
+            }}
+          >
             {messages.map((msg) => {
               const isOut = msg.direction === 'outbound';
               const timeStr = new Date(msg.created_at).toLocaleTimeString([], {
