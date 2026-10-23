@@ -163,7 +163,21 @@ chatsRouter.post('/:id/messages', async (c) => {
   const nowIso = new Date().toISOString();
 
   let messagePreview = payload.text || '';
-  if (msgType === 'template') messagePreview = `📄 Template: ${payload.template?.name}`;
+  if (msgType === 'template') {
+    // Render the actual template content (header, body with variables,
+    // footer, buttons) so the chat shows the real message, not just a name.
+    const tpl = payload.template?.name
+      ? await c.env.DB.prepare('SELECT * FROM templates WHERE name = ?').bind(payload.template.name).first<any>()
+      : null;
+    if (tpl) {
+      const bodyComp = (payload.template?.components || []).find((comp: any) => comp.type === 'body');
+      const vars = (bodyComp?.parameters || []).filter((p: any) => p.type === 'text').map((p: any) => p.text);
+      const { renderTemplateContent } = await import('../services/template-render');
+      messagePreview = renderTemplateContent(tpl, vars, conv.contact_name);
+    } else {
+      messagePreview = `📄 Template: ${payload.template?.name}`;
+    }
+  }
   else if (msgType === 'image') messagePreview = payload.mediaCaption ? `📷 ${payload.mediaCaption}` : '📷 Image';
   else if (msgType === 'document') messagePreview = '📎 Document';
   else if (msgType === 'audio') messagePreview = '🎵 Audio';
@@ -187,10 +201,11 @@ chatsRouter.post('/:id/messages', async (c) => {
     nowIso
   ).run();
 
-  // Update conversation
+  // Update conversation (list preview stays short for templates)
+  const listPreview = msgType === 'template' ? `📄 ${payload.template?.name}` : messagePreview;
   await c.env.DB.prepare(
     'UPDATE conversations SET last_message_text = ?, last_message_at = ?, updated_at = ? WHERE id = ?'
-  ).bind(messagePreview, nowIso, nowIso, conversationId).run();
+  ).bind(listPreview, nowIso, nowIso, conversationId).run();
 
   const newMessage = {
     id: msgId,

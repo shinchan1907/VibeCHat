@@ -314,6 +314,14 @@ def main():
     step("Custom domain")
     ensure_custom_domain(account_id)
 
+    step("Cron schedule (broadcast retries every 30 min)")
+    try:
+        api("PUT", f"/accounts/{account_id}/workers/scripts/{SCRIPT_NAME}/schedules",
+            [{"cron": "*/30 * * * *"}])
+        ok("cron schedule set: */30 * * * *")
+    except Exception as e:
+        warn(f"could not set cron schedule ({str(e)[:140]}) — broadcast retries will not run until it is set")
+
     print(f"\nDEPLOYED: https://{CUSTOM_DOMAIN}")
     print(f"D1: {D1_NAME} ({db_id})  R2 bound: {have_r2}  send_email bound: {email_ok}")
     print(f"WEBHOOK_VERIFY_TOKEN={verify_token}")

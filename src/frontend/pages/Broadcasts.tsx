@@ -38,6 +38,7 @@ export const Broadcasts: React.FC = () => {
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [selectedBroadcast, setSelectedBroadcast] = useState<any>(null);
   const [recipients, setRecipients] = useState<any[]>([]);
+  const [analytics, setAnalytics] = useState<any>(null);
 
   // Create Campaign Form
   const [campaignName, setCampaignName] = useState('');
@@ -50,6 +51,36 @@ export const Broadcasts: React.FC = () => {
   const [headerMediaId, setHeaderMediaId] = useState('');
   const [headerMediaName, setHeaderMediaName] = useState('');
   const [headerUploading, setHeaderUploading] = useState(false);
+
+  const [retryEnabled, setRetryEnabled] = useState(false);
+  const [retryWindow, setRetryWindow] = useState(24);
+  const [testPhone, setTestPhone] = useState('919988777634');
+  const [testSending, setTestSending] = useState(false);
+  const [testNote, setTestNote] = useState('');
+
+  const handleTestSend = async () => {
+    if (!selectedTemplateId || !testPhone.trim()) return;
+    const tpl = templates.find((t) => t.id === selectedTemplateId);
+    if (tpl && ['IMAGE', 'VIDEO', 'DOCUMENT'].includes(tpl.header_type || '') && !headerMediaId) {
+      setTestNote('Upload the header media first — the test send needs it too.');
+      return;
+    }
+    try {
+      setTestSending(true);
+      setTestNote('');
+      const res = await api.broadcasts.testSend({
+        template_id: selectedTemplateId,
+        phone_number: testPhone.trim(),
+        variables: templateVars,
+        header_media_id: headerMediaId || undefined,
+      });
+      if (res.success) setTestNote(`✓ Test message sent to +${testPhone.trim()} — check WhatsApp and the chat in Live Chats.`);
+    } catch (err: any) {
+      setTestNote(`Test send failed: ${err.message || 'unknown error'}`);
+    } finally {
+      setTestSending(false);
+    }
+  };
 
   const handleHeaderMediaUpload = async (file: File) => {
     try {
@@ -97,6 +128,7 @@ export const Broadcasts: React.FC = () => {
       if (res.success) {
         setSelectedBroadcast(res.broadcast);
         setRecipients(res.recipients);
+        setAnalytics((res as any).analytics || null);
       }
     } catch (err: any) {
       alert(err.message || 'Failed to fetch broadcast logs');
@@ -131,6 +163,8 @@ export const Broadcasts: React.FC = () => {
         phone_numbers: parsedNumbers,
         variables: templateVars,
         header_media_id: headerMediaId || undefined,
+        retry_enabled: retryEnabled,
+        retry_window_hours: retryWindow,
       });
 
       if (res.success) {
@@ -141,6 +175,8 @@ export const Broadcasts: React.FC = () => {
         setSelectedTags([]);
         setHeaderMediaId('');
         setHeaderMediaName('');
+        setRetryEnabled(false);
+        setTestNote('');
         loadData();
       }
     } catch (err: any) {
@@ -259,6 +295,8 @@ export const Broadcasts: React.FC = () => {
                   const deliveryPct = b.total_recipients > 0
                     ? Math.round((b.sent_count / b.total_recipients) * 100)
                     : 0;
+                  const readPct = (b.delivered_count || 0) > 0 ? Math.round(((b.read_count || 0) / b.delivered_count) * 100) : 0;
+                  const failPct = b.total_recipients > 0 ? Math.round(((b.failed_count || 0) / b.total_recipients) * 100) : 0;
 
                   return (
                     <tr key={b.id}>
@@ -306,6 +344,10 @@ export const Broadcasts: React.FC = () => {
                               borderRadius: '3px',
                             }}
                           />
+                        </div>
+                        <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '4px' }}>
+                          📖 {readPct}% read • 💬 {b.replies_count || 0} replies • ❌ {failPct}% failed
+                          {b.retry_enabled ? <span> • 🔁 retry {b.retry_window_hours}h</span> : null}
                         </div>
                       </td>
                       <td>
@@ -438,6 +480,48 @@ export const Broadcasts: React.FC = () => {
             </div>
           )}
 
+          {selectedTpl && (
+            <div style={{ background: 'var(--bg-panel)', padding: '12px', borderRadius: '8px', border: '1px solid var(--border-light)' }}>
+              <div style={{ fontSize: '11.5px', fontWeight: 700, marginBottom: '6px' }}>Send a test first (recommended):</div>
+              <div style={{ display: 'flex', gap: '8px' }}>
+                <input
+                  type="text"
+                  value={testPhone}
+                  onChange={(e) => setTestPhone(e.target.value)}
+                  placeholder="Test number with country code"
+                  style={{ flex: 1, padding: '6px 10px', fontSize: '12.5px' }}
+                />
+                <button type="button" onClick={handleTestSend} disabled={testSending} className="btn-secondary" style={{ padding: '6px 14px', fontSize: '12.5px' }}>
+                  {testSending ? 'Sending…' : 'Send Test'}
+                </button>
+              </div>
+              {testNote && <div style={{ fontSize: '12px', marginTop: '6px' }}>{testNote}</div>}
+            </div>
+          )}
+
+          <div style={{ background: 'var(--bg-panel)', padding: '12px', borderRadius: '8px', border: '1px solid var(--border-light)' }}>
+            <label style={{ fontSize: '12.5px', display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontWeight: 600 }}>
+              <input
+                type="checkbox"
+                checked={retryEnabled}
+                onChange={(e) => setRetryEnabled(e.target.checked)}
+              />
+              Auto-retry failed messages
+            </label>
+            {retryEnabled && (
+              <div style={{ marginTop: '8px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>Keep retrying failures for</span>
+                <select value={retryWindow} onChange={(e) => setRetryWindow(Number(e.target.value))} style={{ padding: '5px 8px', fontSize: '12.5px' }}>
+                  <option value={6}>6 hours</option>
+                  <option value={24}>24 hours</option>
+                  <option value={48}>48 hours</option>
+                  <option value={72}>72 hours</option>
+                </select>
+                <span style={{ fontSize: '11.5px', color: 'var(--text-muted)' }}>(checked every 30 min, max 10 attempts each)</span>
+              </div>
+            )}
+          </div>
+
           <div>
             <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, marginBottom: '6px' }}>
               Audience Targeting
@@ -543,6 +627,35 @@ export const Broadcasts: React.FC = () => {
                 <div style={{ fontSize: '18px', fontWeight: 800, color: '#4a8bf6' }}>{selectedBroadcast.read_count}</div>
               </div>
             </div>
+
+            {analytics && (
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '10px', textAlign: 'center' }}>
+                <div style={{ background: 'var(--bg-panel)', padding: '10px', borderRadius: '8px' }}>
+                  <div style={{ fontSize: '10.5px', color: 'var(--text-muted)' }}>FAILED</div>
+                  <div style={{ fontSize: '16px', fontWeight: 800, color: '#dc2626' }}>{analytics.failed} ({analytics.fail_rate}%)</div>
+                </div>
+                <div style={{ background: 'var(--bg-panel)', padding: '10px', borderRadius: '8px' }}>
+                  <div style={{ fontSize: '10.5px', color: 'var(--text-muted)' }}>REPLIES</div>
+                  <div style={{ fontSize: '16px', fontWeight: 800 }}>{analytics.replies} ({analytics.reply_rate}%)</div>
+                </div>
+                <div style={{ background: 'var(--bg-panel)', padding: '10px', borderRadius: '8px' }}>
+                  <div style={{ fontSize: '10.5px', color: 'var(--text-muted)' }}>DELIVERY RATE</div>
+                  <div style={{ fontSize: '16px', fontWeight: 800, color: '#16a34a' }}>{analytics.delivery_rate}%</div>
+                </div>
+                <div style={{ background: 'var(--bg-panel)', padding: '10px', borderRadius: '8px' }}>
+                  <div style={{ fontSize: '10.5px', color: 'var(--text-muted)' }}>READ RATE</div>
+                  <div style={{ fontSize: '16px', fontWeight: 800, color: '#4a8bf6' }}>{analytics.read_rate}%</div>
+                </div>
+                <div style={{ background: 'var(--bg-panel)', padding: '10px', borderRadius: '8px' }}>
+                  <div style={{ fontSize: '10.5px', color: 'var(--text-muted)' }}>IN FLIGHT</div>
+                  <div style={{ fontSize: '16px', fontWeight: 800 }}>{analytics.in_flight}</div>
+                </div>
+                <div style={{ background: 'var(--bg-panel)', padding: '10px', borderRadius: '8px' }}>
+                  <div style={{ fontSize: '10.5px', color: 'var(--text-muted)' }}>AUTO-RETRY</div>
+                  <div style={{ fontSize: '16px', fontWeight: 800 }}>{selectedBroadcast.retry_enabled ? `ON • ${selectedBroadcast.retry_window_hours}h` : 'OFF'}</div>
+                </div>
+              </div>
+            )}
 
             <div className="table-container" style={{ maxHeight: '300px' }}>
               <table className="saas-table">

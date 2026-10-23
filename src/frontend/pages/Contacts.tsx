@@ -146,8 +146,9 @@ export const Contacts: React.FC = () => {
       const importList: any[] = [];
 
       for (const line of lines) {
-        const parts = line.split(/[,\t]+/).map((p) => p.trim());
-        if (parts.length > 0 && parts[0].length >= 7) {
+        // Accept comma, tab, or 2+ space separators ("phone   Name" pastes work too)
+        const parts = line.split(/[,\t]+|\s{2,}/).map((p) => p.trim()).filter(Boolean);
+        if (parts.length > 0 && parts[0].replace(/\D/g, '').length >= 7) {
           importList.push({
             phone_number: parts[0],
             name: parts[1] || undefined,
@@ -167,7 +168,7 @@ export const Contacts: React.FC = () => {
       });
 
       if (res.success) {
-        alert(`Successfully imported ${res.count} contact(s)!`);
+        alert(`Import complete: ${res.count} contact(s) processed (${res.created ?? 0} new, ${res.updated ?? 0} already existed and were updated).`);
         setShowImportModal(false);
         setImportText('');
         loadContacts();

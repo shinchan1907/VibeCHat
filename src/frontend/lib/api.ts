@@ -126,6 +126,11 @@ export const api = {
           body: JSON.stringify(payload),
         }
       ),
+    testSend: (payload: { template_id: string; phone_number: string; variables?: string[]; header_media_id?: string }) =>
+      request<{ success: boolean; wamid?: string }>('/broadcasts/test-send', {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      }),
     uploadHeaderMedia: (file: File) => {
       const formData = new FormData();
       formData.append('file', file);
@@ -200,7 +205,7 @@ export const api = {
       body: JSON.stringify(payload),
     }),
     import: (payload: { contacts: any[]; default_tags?: string[] }) =>
-      request<{ success: boolean; count: number }>('/contacts/import', {
+      request<{ success: boolean; count: number; created?: number; updated?: number }>('/contacts/import', {
         method: 'POST',
         body: JSON.stringify(payload),
       }),

@@ -512,7 +512,7 @@ export const ChatInbox: React.FC = () => {
                   )}
 
                   {/* Text Content */}
-                  <div>{msg.content}</div>
+                  <div style={{ whiteSpace: 'pre-wrap' }}>{msg.content}</div>
 
                   {/* Meta: Timestamp + Delivery Checkmarks */}
                   <div className="message-meta">

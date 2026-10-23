@@ -12,6 +12,7 @@ import { contactsRouter } from './routes/contacts';
 import { settingsRouter } from './routes/settings';
 import { mediaRouter } from './routes/media';
 import { botsRouter } from './routes/bots';
+import { runBroadcastRetries } from './routes/broadcasts';
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -127,4 +128,11 @@ app.all('*', async (c) => {
   return c.text('ByteNex WABA API Server (Cloudflare Worker)', 200);
 });
 
-export default app;
+export default {
+  fetch: app.fetch,
+  // Cron (every 30 min, registered by scripts/deploy.py): retry failed
+  // broadcast messages inside their retry window.
+  async scheduled(_event: any, env: Env, ctx: any) {
+    ctx.waitUntil(runBroadcastRetries(env));
+  },
+};

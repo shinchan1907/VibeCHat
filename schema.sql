@@ -161,6 +161,22 @@ CREATE TABLE IF NOT EXISTS flows (
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
+-- Per-broadcast send configuration (header media + retry policy) and retry state
+CREATE TABLE IF NOT EXISTS broadcast_send_config (
+  broadcast_id TEXT PRIMARY KEY,
+  header_media_id TEXT,
+  retry_enabled INTEGER DEFAULT 0,
+  retry_window_hours INTEGER DEFAULT 0,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS broadcast_retry_state (
+  recipient_id TEXT PRIMARY KEY,
+  broadcast_id TEXT,
+  attempts INTEGER DEFAULT 0,
+  last_attempt_at DATETIME
+);
+
 -- Structured Flow Submissions (parsed from nfm_reply webhooks; shown in the
 -- Flows page Submissions tab and exported to CSV/Excel)
 CREATE TABLE IF NOT EXISTS flow_submissions (

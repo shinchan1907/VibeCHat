@@ -141,38 +141,70 @@ contactsRouter.post('/import', async (c) => {
     return c.json({ success: false, error: 'Contacts list is required' }, 400);
   }
 
-  let imported = 0;
-  const nowIso = new Date().toISOString();
-
+  // Dedupe by cleaned phone (last entry wins)
+  const byPhone = new Map<string, { phone_number: string; name?: string; email?: string; tags?: string[] }>();
   for (const item of importList) {
     if (!item.phone_number) continue;
     const cleanPhone = item.phone_number.replace(/\D/g, '');
     if (cleanPhone.length < 7) continue;
-
-    const contactId = `cnt_${Date.now()}_${Math.random().toString(36).substring(7)}`;
-    const mergedTags = Array.from(new Set([...(item.tags || []), ...(default_tags || ['Imported'])]));
-
-    await c.env.DB.prepare(
-      `INSERT INTO contacts (id, phone_number, name, email, tags, opt_in_status, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, "opted_in", ?, ?)
-       ON CONFLICT(phone_number) DO UPDATE SET
-         name = COALESCE(excluded.name, contacts.name),
-         email = COALESCE(excluded.email, contacts.email),
-         updated_at = excluded.updated_at`
-    ).bind(
-      contactId,
-      cleanPhone,
-      item.name || `+${cleanPhone}`,
-      item.email || null,
-      JSON.stringify(mergedTags),
-      nowIso,
-      nowIso
-    ).run();
-
-    imported++;
+    byPhone.set(cleanPhone, item);
+  }
+  const items = [...byPhone.entries()];
+  if (items.length === 0) {
+    return c.json({ success: false, error: 'No valid phone numbers found' }, 400);
   }
 
-  return c.json({ success: true, count: imported });
+  const nowIso = new Date().toISOString();
+  const CHUNK = 100;
+  let created = 0;
+  let updated = 0;
+
+  for (let i = 0; i < items.length; i += CHUNK) {
+    const chunk = items.slice(i, i + CHUNK);
+    // Fetch existing tags so duplicates merge tags instead of losing them
+    const placeholders = chunk.map(() => '?').join(',');
+    const existing = await c.env.DB.prepare(
+      `SELECT phone_number, tags FROM contacts WHERE phone_number IN (${placeholders})`
+    ).bind(...chunk.map(([phone]) => phone)).all<any>();
+    const existingTags = new Map<string, string[]>();
+    for (const row of existing.results || []) {
+      try { existingTags.set(row.phone_number, JSON.parse(row.tags || '[]')); } catch { existingTags.set(row.phone_number, []); }
+    }
+
+    const statements = chunk.map(([cleanPhone, item]) => {
+      const isExisting = existingTags.has(cleanPhone);
+      if (isExisting) updated++; else created++;
+      const mergedTags = Array.from(new Set([
+        ...(existingTags.get(cleanPhone) || []),
+        ...(item.tags || []),
+        ...(default_tags || ['Imported']),
+      ]));
+      return c.env.DB.prepare(
+        `INSERT INTO contacts (id, phone_number, name, email, tags, opt_in_status, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, "opted_in", ?, ?)
+         ON CONFLICT(phone_number) DO UPDATE SET
+           name = COALESCE(excluded.name, contacts.name),
+           email = COALESCE(excluded.email, contacts.email),
+           tags = excluded.tags,
+           updated_at = excluded.updated_at`
+      ).bind(
+        `cnt_${Date.now()}_${Math.random().toString(36).substring(7)}`,
+        cleanPhone,
+        item.name || `+${cleanPhone}`,
+        item.email || null,
+        JSON.stringify(mergedTags),
+        nowIso,
+        nowIso
+      );
+    });
+
+    // One batched round-trip per chunk (the old row-by-row loop timed out on
+    // large pastes — rows were written but the response never arrived, so the
+    // UI reported "Request failed" for an import that had mostly succeeded).
+    await c.env.DB.batch(statements);
+  }
+
+  return c.json({ success: true, count: items.length, created, updated });
 });
 
 /**
