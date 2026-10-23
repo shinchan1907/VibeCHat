@@ -259,16 +259,31 @@ broadcastsRouter.post('/', async (c) => {
     return c.json({ success: false, error: `This template has a ${String(template.header_type).toLowerCase()} header — upload the header media before launching the broadcast.` }, 400);
   }
 
-  // Find recipients based on target_type
+  // Find recipients based on target_type. All lookups are batched/paged —
+  // per-row queries here previously blew the Worker subrequest limit on
+  // lists over ~1000 numbers (HTTP 500 before the campaign was even created).
   let targetContacts: any[] = [];
 
+  const fetchAllOptedIn = async (): Promise<any[]> => {
+    const out: any[] = [];
+    let lastRowid = 0;
+    for (;;) {
+      const res = await c.env.DB.prepare(
+        'SELECT rowid, * FROM contacts WHERE opt_in_status = "opted_in" AND rowid > ? ORDER BY rowid ASC LIMIT 900'
+      ).bind(lastRowid).all<any>();
+      const batch = res.results || [];
+      out.push(...batch);
+      if (batch.length < 900) break;
+      lastRowid = batch[batch.length - 1].rowid;
+    }
+    return out;
+  };
+
   if (payload.target_type === 'all') {
-    const res = await c.env.DB.prepare('SELECT * FROM contacts WHERE opt_in_status = "opted_in" LIMIT 1000').all<any>();
-    targetContacts = res.results || [];
+    targetContacts = await fetchAllOptedIn();
   } else if (payload.target_type === 'tags' && payload.target_tags && payload.target_tags.length > 0) {
-    // Retrieve contacts matching any of the tags
-    const allContacts = await c.env.DB.prepare('SELECT * FROM contacts WHERE opt_in_status = "opted_in" LIMIT 1000').all<any>();
-    targetContacts = (allContacts.results || []).filter((ct) => {
+    const allContacts = await fetchAllOptedIn();
+    targetContacts = allContacts.filter((ct) => {
       try {
         const tags: string[] = typeof ct.tags === 'string' ? JSON.parse(ct.tags || '[]') : (ct.tags || []);
         return payload.target_tags!.some((t) => tags.includes(t));
@@ -277,22 +292,29 @@ broadcastsRouter.post('/', async (c) => {
       }
     });
   } else if (payload.target_type === 'numbers' && payload.phone_numbers) {
-    // Upsert contacts from manual input/CSV
-    for (const rawPhone of payload.phone_numbers) {
-      const clean = rawPhone.replace(/\D/g, '');
-      if (clean.length < 7) continue;
-
-      let ct = await c.env.DB.prepare('SELECT * FROM contacts WHERE phone_number = ?').bind(clean).first<any>();
-      if (!ct) {
-        const ctId = `cnt_${Date.now()}_${Math.random().toString(36).substring(7)}`;
-        await c.env.DB.prepare(
-          'INSERT INTO contacts (id, phone_number, name, tags, opt_in_status) VALUES (?, ?, ?, ?, "opted_in")'
-        ).bind(ctId, clean, `+${clean}`, JSON.stringify(['Broadcast List'])).run();
-        targetContacts.push({ id: ctId, phone_number: clean, name: `+${clean}` });
-      } else {
-        targetContacts.push(ct);
-      }
+    // Dedupe + clean, resolve existing contacts in IN(...) chunks, batch-insert the rest
+    const cleaned = [...new Set(payload.phone_numbers.map((p) => p.replace(/\D/g, '')).filter((p) => p.length >= 7))];
+    const found = new Map<string, any>();
+    const NCHUNK = 100;
+    for (let i = 0; i < cleaned.length; i += NCHUNK) {
+      const slice = cleaned.slice(i, i + NCHUNK);
+      const res = await c.env.DB.prepare(
+        `SELECT * FROM contacts WHERE phone_number IN (${slice.map(() => '?').join(',')})`
+      ).bind(...slice).all<any>();
+      for (const ct of res.results || []) found.set(ct.phone_number, ct);
     }
+    const missing = cleaned.filter((p) => !found.has(p));
+    for (let i = 0; i < missing.length; i += NCHUNK) {
+      const slice = missing.slice(i, i + NCHUNK);
+      await c.env.DB.batch(slice.map((clean) => {
+        const ctId = `cnt_${Date.now()}_${Math.random().toString(36).substring(7)}`;
+        found.set(clean, { id: ctId, phone_number: clean, name: `+${clean}` });
+        return c.env.DB.prepare(
+          'INSERT INTO contacts (id, phone_number, name, tags, opt_in_status) VALUES (?, ?, ?, ?, "opted_in")'
+        ).bind(ctId, clean, `+${clean}`, JSON.stringify(['Broadcast List']));
+      }));
+    }
+    targetContacts = cleaned.map((p) => found.get(p)).filter(Boolean);
   }
 
   if (targetContacts.length === 0) {
@@ -374,23 +396,37 @@ broadcastsRouter.post('/', async (c) => {
  * timeline and the campaign counters incrementally, so progress is real and
  * a campaign can never be lost mid-dispatch.
  */
-export async function processBroadcastQueue(env: Env): Promise<void> {
+export async function processBroadcastQueue(env: Env): Promise<{ processed: number; sent: number; failed: number }> {
   const db: any = (env as any).DB;
+  // Reclaim rows orphaned in 'sending' by an invocation that died mid-flight.
+  await db.prepare('UPDATE broadcast_recipients SET status = "queued", error_message = NULL WHERE status = "sending"').run();
+  // Claim a batch under a unique token so overlapping invocations (cron tick
+  // + manual trigger) can never process the same recipient twice.
+  const claimToken = `claim_${Date.now()}_${Math.random().toString(36).substring(7)}`;
+  const candidates: any = await db.prepare(
+    'SELECT id FROM broadcast_recipients WHERE status = "queued" ORDER BY rowid ASC LIMIT 40'
+  ).all();
+  const candIds = (candidates.results || []).map((r: any) => r.id);
+  if (candIds.length === 0) return { processed: 0, sent: 0, failed: 0 };
+  await db.prepare(
+    `UPDATE broadcast_recipients SET status = "sending", error_message = ? WHERE id IN (${candIds.map(() => '?').join(',')}) AND status = "queued"`
+  ).bind(claimToken, ...candIds).run();
   const due: any = await db.prepare(
     `SELECT br.id AS recipient_id, br.broadcast_id, br.contact_id, br.phone_number,
             b.template_id, b.variable_mappings, b.status AS bstatus, cfg.header_media_id
      FROM broadcast_recipients br
      JOIN broadcasts b ON b.id = br.broadcast_id
      LEFT JOIN broadcast_send_config cfg ON cfg.broadcast_id = br.broadcast_id
-     WHERE br.status = 'queued'
-     ORDER BY br.rowid ASC
-     LIMIT 60`
-  ).all();
+     WHERE br.status = 'sending' AND br.error_message = ?
+     ORDER BY br.rowid ASC`
+  ).bind(claimToken).all();
   const rows = due.results || [];
 
+  let sent = 0;
+  let failed = 0;
   if (rows.length > 0) {
     const settings = await db.prepare('SELECT * FROM waba_settings WHERE id = "default"').first() as any;
-    if (!settings?.access_token) return;
+    if (!settings?.access_token) return { processed: 0, sent: 0, failed: 0 };
     const metaApi = new MetaApiService(settings as WabaSettings);
     const touchedBroadcasts = new Set<string>();
 
@@ -446,6 +482,7 @@ export async function processBroadcastQueue(env: Env): Promise<void> {
         }
       }
 
+      if (isSuccess) sent++; else failed++;
       await db.prepare('UPDATE broadcast_recipients SET status = ?, wamid = ?, error_message = ?, sent_at = ? WHERE id = ?')
         .bind(isSuccess ? 'sent' : 'failed', wamid, errorMsg, isSuccess ? nowIso : null, row.recipient_id).run();
       await db.prepare(
@@ -457,7 +494,7 @@ export async function processBroadcastQueue(env: Env): Promise<void> {
     }
 
     // Flip campaigns whose queue has drained to completed
-    for (const bid of touchedBroadcasts) {
+    for (const bid of [...touchedBroadcasts]) {
       const remaining = await db.prepare('SELECT COUNT(*) AS n FROM broadcast_recipients WHERE broadcast_id = ? AND status = "queued"').bind(bid).first() as any;
       if ((remaining?.n || 0) === 0) {
         await db.prepare('UPDATE broadcasts SET status = "completed", completed_at = ? WHERE id = ? AND status != "completed"')
@@ -465,7 +502,23 @@ export async function processBroadcastQueue(env: Env): Promise<void> {
       }
     }
   }
+  return { processed: rows.length, sent, failed };
 }
+
+/**
+ * Manual trigger for the background processors (same work the cron does) —
+ * also serves as a health check for the queue/retry engines.
+ */
+broadcastsRouter.post('/process-queue', async (c) => {
+  try {
+    const queue = await processBroadcastQueue(c.env);
+    await runBroadcastRetries(c.env);
+    const pending: any = await c.env.DB.prepare('SELECT COUNT(*) AS n FROM broadcast_recipients WHERE status = "queued"').first();
+    return c.json({ success: true, queue, queued_remaining: pending?.n || 0 });
+  } catch (e: any) {
+    return c.json({ success: false, error: e?.message || String(e) }, 500);
+  }
+});
 
 /**
  * Cron-driven retry engine: re-sends FAILED broadcast messages while the
