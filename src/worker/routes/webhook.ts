@@ -331,6 +331,56 @@ webhookRouter.post('/', async (c) => {
 
                 if (matched) {
                   const nodes = typeof bot.nodes_json === 'string' ? JSON.parse(bot.nodes_json || '[]') : (bot.nodes_json || []);
+
+                  // Flow action node: send a WhatsApp Flow instead of a text reply
+                  const flowNode = nodes.find((n: any) => n.type === 'flow' && n.config?.flow_id);
+                  if (flowNode) {
+                    const settings = await c.env.DB.prepare('SELECT * FROM waba_settings WHERE id = "default"').first<any>();
+                    const metaApi = new (await import('../services/meta-api')).MetaApiService(settings || { id: 'default' });
+                    const flowRow = await c.env.DB.prepare('SELECT * FROM flows WHERE id = ?').bind(flowNode.config.flow_id).first<any>();
+                    if (flowRow) {
+                      let firstScreen = 'SCREEN_1';
+                      try {
+                        const fj = typeof flowRow.flow_json === 'string' ? JSON.parse(flowRow.flow_json || '{}') : flowRow.flow_json;
+                        if (fj?.screens?.[0]?.id) firstScreen = fj.screens[0].id;
+                      } catch { /* fallback */ }
+                      const flowSend = await metaApi.sendMessage({
+                        to: customerPhone,
+                        type: 'interactive',
+                        interactive: {
+                          type: 'flow',
+                          header: flowNode.config.header_text ? { type: 'text', text: flowNode.config.header_text } : undefined,
+                          body: { text: flowNode.config.body_text || `Please complete our ${flowRow.name}` },
+                          footer: { text: 'ByteNex Interactive Form' },
+                          action: {
+                            name: 'flow',
+                            parameters: {
+                              flow_message_version: '3',
+                              flow_token: `ft_${flowRow.id}`,
+                              flow_id: flowRow.id,
+                              flow_cta: flowNode.config.call_to_action || 'Open Form',
+                              flow_action: 'navigate',
+                              flow_action_payload: { screen: firstScreen },
+                            },
+                          },
+                        },
+                      });
+                      if (flowSend.success) {
+                        const preview = `📋 [Flow Sent]: ${flowRow.name}`;
+                        await c.env.DB.prepare(
+                          'INSERT INTO messages (id, conversation_id, wamid, direction, type, content, status) VALUES (?, ?, ?, "outbound", "interactive", ?, "sent")'
+                        ).bind(`msg_${Date.now()}_${Math.random().toString(36).substring(7)}`, conv.id, flowSend.wamid || null, preview).run();
+                        await c.env.DB.prepare(
+                          'UPDATE conversations SET last_message_text = ?, last_message_at = ? WHERE id = ?'
+                        ).bind(preview, new Date().toISOString(), conv.id).run();
+                      }
+                    }
+                    await c.env.DB.prepare(
+                      'UPDATE chatbot_flows SET execution_count = execution_count + 1 WHERE id = ?'
+                    ).bind(bot.id).run();
+                    break;
+                  }
+
                   let botReply = 'Hello! Thanks for reaching out to ByteNex.';
                   let replyButtons: string[] = [];
 

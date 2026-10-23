@@ -72,6 +72,26 @@ export const ChatInbox: React.FC = () => {
   // Selected Template
   const [selectedTemplate, setSelectedTemplate] = useState<any>(null);
   const [templateVars, setTemplateVars] = useState<string[]>([]);
+  const [tplHeaderMediaId, setTplHeaderMediaId] = useState('');
+  const [tplHeaderMediaName, setTplHeaderMediaName] = useState('');
+  const [tplHeaderUploading, setTplHeaderUploading] = useState(false);
+
+  const handleTplHeaderMediaUpload = async (file: File) => {
+    try {
+      setTplHeaderUploading(true);
+      const res = await api.broadcasts.uploadHeaderMedia(file);
+      if (res.success) {
+        setTplHeaderMediaId(res.media_id);
+        setTplHeaderMediaName(res.filename || file.name);
+      }
+    } catch (err: any) {
+      alert(err.message || 'Header media upload failed');
+      setTplHeaderMediaId('');
+      setTplHeaderMediaName('');
+    } finally {
+      setTplHeaderUploading(false);
+    }
+  };
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -207,9 +227,22 @@ export const ChatInbox: React.FC = () => {
   const handleSendTemplate = async () => {
     if (!activeConvId || !selectedTemplate) return;
 
+    const isMediaHeader = ['IMAGE', 'VIDEO', 'DOCUMENT'].includes(selectedTemplate.header_type || '');
+    if (isMediaHeader && !tplHeaderMediaId) {
+      alert(`This template has a ${String(selectedTemplate.header_type).toLowerCase()} header — please upload the header media first, otherwise the send will fail.`);
+      return;
+    }
+
     try {
       setSending(true);
       const components: any[] = [];
+      if (isMediaHeader && tplHeaderMediaId) {
+        const ht = String(selectedTemplate.header_type).toLowerCase();
+        components.push({
+          type: 'header',
+          parameters: [{ type: ht, [ht]: { id: tplHeaderMediaId } }],
+        });
+      }
       if (templateVars.length > 0) {
         components.push({
           type: 'body',
@@ -231,6 +264,8 @@ export const ChatInbox: React.FC = () => {
         setShowTemplateModal(false);
         setSelectedTemplate(null);
         setTemplateVars([]);
+        setTplHeaderMediaId('');
+        setTplHeaderMediaName('');
         loadConversations(true);
       }
     } catch (err: any) {
@@ -756,6 +791,8 @@ export const ChatInbox: React.FC = () => {
                 setSelectedTemplate(found || null);
                 const matches = found?.body_text?.match(/{{\d+}}/g) || [];
                 setTemplateVars(new Array(matches.length).fill(''));
+                setTplHeaderMediaId('');
+                setTplHeaderMediaName('');
               }}
               style={{ width: '100%' }}
             >
@@ -776,6 +813,27 @@ export const ChatInbox: React.FC = () => {
               <div style={{ fontSize: '13px', whiteSpace: 'pre-wrap', color: 'var(--text-primary)', marginBottom: '10px' }}>
                 {selectedTemplate.body_text}
               </div>
+
+              {['IMAGE', 'VIDEO', 'DOCUMENT'].includes(selectedTemplate.header_type || '') && (
+                <div style={{ borderTop: '1px solid var(--border-light)', paddingTop: '10px', marginTop: '4px' }}>
+                  <div style={{ fontSize: '11.5px', fontWeight: 700, marginBottom: '4px' }}>
+                    Header {String(selectedTemplate.header_type).toLowerCase()} (required — without it this send fails):
+                  </div>
+                  <input
+                    type="file"
+                    accept={selectedTemplate.header_type === 'IMAGE' ? 'image/*' : selectedTemplate.header_type === 'VIDEO' ? 'video/*' : '.pdf,.doc,.docx'}
+                    onChange={(e) => {
+                      const f = e.target.files?.[0];
+                      if (f) handleTplHeaderMediaUpload(f);
+                    }}
+                    style={{ width: '100%', fontSize: '12px' }}
+                  />
+                  {tplHeaderUploading && <div style={{ fontSize: '12px', marginTop: '4px' }}>Uploading to Meta…</div>}
+                  {tplHeaderMediaId && !tplHeaderUploading && (
+                    <div style={{ fontSize: '12px', marginTop: '4px', color: '#0a7d43' }}>✓ Attached: {tplHeaderMediaName}</div>
+                  )}
+                </div>
+              )}
 
               {templateVars.length > 0 && (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', marginTop: '10px', borderTop: '1px solid var(--border-light)', paddingTop: '10px' }}>

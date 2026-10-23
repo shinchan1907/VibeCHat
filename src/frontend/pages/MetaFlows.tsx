@@ -126,6 +126,33 @@ export const MetaFlows: React.FC = () => {
     }
   };
 
+  const handleDownloadFlowSubmissions = async (flow: any) => {
+    try {
+      const blob = await api.flows.exportSubmissions(flow.id);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `submissions-${String(flow.name || 'flow').replace(/[^\w-]+/g, '_')}.csv`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (err: any) {
+      alert(err.message || 'Export failed');
+    }
+  };
+
+  const handleDeleteFlow = async (flow: any) => {
+    if (!window.confirm(`Delete flow "${flow.name}"? It will be removed from Meta as well. Submissions collected so far will be kept.`)) return;
+    try {
+      const res = await api.flows.delete(flow.id);
+      if (res.success) {
+        loadFlows();
+        loadSubmissions();
+      }
+    } catch (err: any) {
+      alert(err.message || 'Failed to delete flow');
+    }
+  };
+
   useEffect(() => {
     loadFlows();
     loadSubmissions();
@@ -630,7 +657,7 @@ export const MetaFlows: React.FC = () => {
                     </div>
                   </div>
 
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '16px', paddingTop: '12px', borderTop: '1px solid var(--border-light)' }}>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', alignItems: 'center', marginTop: '16px', paddingTop: '12px', borderTop: '1px solid var(--border-light)' }}>
                     <button
                       onClick={() => setSelectedSimFlow(flow)}
                       className="btn-secondary"
@@ -641,12 +668,30 @@ export const MetaFlows: React.FC = () => {
                     </button>
 
                     <button
+                      onClick={() => handleDownloadFlowSubmissions(flow)}
+                      className="btn-secondary"
+                      style={{ padding: '6px 12px', fontSize: '12px' }}
+                    >
+                      <Download size={13} />
+                      <span>Download Submissions</span>
+                    </button>
+
+                    <button
+                      onClick={() => handleDeleteFlow(flow)}
+                      className="btn-secondary"
+                      style={{ padding: '6px 12px', fontSize: '12px', color: '#b3261e' }}
+                    >
+                      <Trash2 size={13} />
+                      <span>Delete</span>
+                    </button>
+
+                    <button
                       onClick={() => {
                         setFlowToSend(flow);
                         setShowSendModal(true);
                       }}
                       className="btn-pitch"
-                      style={{ padding: '6px 12px', fontSize: '12px' }}
+                      style={{ padding: '6px 12px', fontSize: '12px', marginLeft: 'auto' }}
                     >
                       <Send size={13} />
                       <span>Send in Chat</span>

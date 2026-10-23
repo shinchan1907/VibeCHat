@@ -155,14 +155,17 @@ export const api = {
         body: JSON.stringify(payload),
       }),
     submissions: () => request<{ success: boolean; submissions: any[] }>('/flows/submissions'),
-    exportSubmissions: async (): Promise<Blob> => {
+    exportSubmissions: async (flowId?: string): Promise<Blob> => {
       const token = localStorage.getItem('waba_token');
-      const res = await fetch(`${API_BASE}/flows/submissions/export`, {
+      const qs = flowId ? `?flow_id=${encodeURIComponent(flowId)}` : '';
+      const res = await fetch(`${API_BASE}/flows/submissions/export${qs}`, {
         headers: token ? { Authorization: `Bearer ${token}` } : {},
       });
       if (!res.ok) throw new ApiError('Export failed', res.status);
       return res.blob();
     },
+    delete: (id: string) =>
+      request<{ success: boolean; meta?: string }>(`/flows/${id}`, { method: 'DELETE' }),
   },
 
   contacts: {
