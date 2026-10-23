@@ -7,118 +7,7 @@ export const flowsRouter = new Hono<{ Bindings: Env }>();
 /**
  * Standard WhatsApp Flow Templates
  */
-const DEFAULT_FLOW_TEMPLATES = [
-  {
-    name: 'Customer Feedback Survey',
-    categories: ['CUSTOMER_SUPPORT', 'SURVEY'],
-    flow_json: {
-      version: '3.1',
-      screens: [
-        {
-          id: 'SURVEY_SCREEN',
-          title: 'ByteNex Feedback',
-          data: {},
-          terminal: false,
-          layout: {
-            type: 'SingleColumnLayout',
-            children: [
-              {
-                type: 'TextHeading',
-                text: 'How was your experience?',
-              },
-              {
-                type: 'TextSubheading',
-                text: 'Your feedback helps us deliver better services.',
-              },
-              {
-                type: 'Dropdown',
-                name: 'satisfaction',
-                label: 'Overall Satisfaction',
-                required: true,
-                'data-source': [
-                  { id: '5', title: '⭐⭐⭐⭐⭐ Excellent' },
-                  { id: '4', title: '⭐⭐⭐⭐ Very Good' },
-                  { id: '3', title: '⭐⭐⭐ Average' },
-                  { id: '2', title: '⭐⭐ Needs Improvement' },
-                  { id: '1', title: '⭐ Poor' },
-                ],
-              },
-              {
-                type: 'TextArea',
-                name: 'comments',
-                label: 'Any additional comments or suggestions?',
-                required: false,
-              },
-              {
-                type: 'Footer',
-                label: 'Submit Feedback',
-                'on-click-action': {
-                  name: 'complete',
-                  payload: {
-                    rating: '${form.satisfaction}',
-                    comment: '${form.comments}',
-                  },
-                },
-              },
-            ],
-          },
-        },
-      ],
-    },
-  },
-  {
-    name: 'Lead Qualification & Consultation',
-    categories: ['LEAD_GENERATION', 'APPOINTMENT_BOOKING'],
-    flow_json: {
-      version: '3.1',
-      screens: [
-        {
-          id: 'LEAD_SCREEN',
-          title: 'Schedule a Consultation',
-          data: {},
-          terminal: false,
-          layout: {
-            type: 'SingleColumnLayout',
-            children: [
-              {
-                type: 'TextHeading',
-                text: 'Tell us about your project',
-              },
-              {
-                type: 'TextInput',
-                name: 'company_name',
-                label: 'Company or Business Name',
-                required: true,
-              },
-              {
-                type: 'Dropdown',
-                name: 'service_interest',
-                label: 'Service of Interest',
-                required: true,
-                'data-source': [
-                  { id: 'waba_api', title: 'WhatsApp Business API' },
-                  { id: 'automation', title: 'Workflow Automation' },
-                  { id: 'custom_dev', title: 'Cloudflare / Custom Software' },
-                ],
-              },
-              {
-                type: 'Footer',
-                label: 'Request Consultation',
-                'on-click-action': {
-                  name: 'complete',
-                  payload: {
-                    company: '${form.company_name}',
-                    interest: '${form.service_interest}',
-                  },
-                },
-              },
-            ],
-          },
-        },
-      ],
-    },
-  },
-];
+
 
 /**
  * List all Flows
@@ -126,40 +15,11 @@ const DEFAULT_FLOW_TEMPLATES = [
 flowsRouter.get('/', async (c) => {
   const rows = await c.env.DB.prepare('SELECT * FROM flows ORDER BY created_at DESC').all<any>();
 
-  let flows = (rows.results || []).map((f) => ({
+  const flows = (rows.results || []).map((f) => ({
     ...f,
     categories: typeof f.categories === 'string' ? JSON.parse(f.categories || '[]') : (f.categories || []),
     flow_json: typeof f.flow_json === 'string' ? JSON.parse(f.flow_json || '{}') : (f.flow_json || {}),
   }));
-
-  // If no flows exist yet, seed the default templates so the user immediately has working flows!
-  if (flows.length === 0) {
-    const seeded = [];
-    for (const def of DEFAULT_FLOW_TEMPLATES) {
-      const flowId = `flow_${Date.now()}_${Math.random().toString(36).substring(7)}`;
-      const nowIso = new Date().toISOString();
-      await c.env.DB.prepare(
-        'INSERT INTO flows (id, name, categories, status, flow_json, synced_at) VALUES (?, ?, ?, "PUBLISHED", ?, ?)'
-      ).bind(
-        flowId,
-        def.name,
-        JSON.stringify(def.categories),
-        JSON.stringify(def.flow_json),
-        nowIso
-      ).run();
-
-      seeded.push({
-        id: flowId,
-        name: def.name,
-        categories: def.categories,
-        status: 'PUBLISHED',
-        flow_json: def.flow_json,
-        synced_at: nowIso,
-        created_at: nowIso,
-      });
-    }
-    flows = seeded;
-  }
 
   return c.json({ success: true, flows });
 });
@@ -297,6 +157,14 @@ flowsRouter.post('/:id/send', async (c) => {
   const settings = await c.env.DB.prepare('SELECT * FROM waba_settings WHERE id = "default"').first<WabaSettings>();
   const metaApi = new MetaApiService(settings || { id: 'default' });
 
+  // Navigate to the flow's actual first screen (was hard-coded to a screen
+  // that only existed in the old demo flows).
+  let firstScreen = 'SURVEY_SCREEN';
+  try {
+    const fj = typeof flow.flow_json === 'string' ? JSON.parse(flow.flow_json || '{}') : flow.flow_json;
+    if (fj?.screens?.[0]?.id) firstScreen = fj.screens[0].id;
+  } catch { /* keep fallback */ }
+
   // Format interactive flow message according to Meta specification
   const interactivePayload = {
     type: 'flow',
@@ -312,7 +180,7 @@ flowsRouter.post('/:id/send', async (c) => {
         flow_cta: call_to_action || 'Open Form',
         flow_action: 'navigate',
         flow_action_payload: {
-          screen: 'SURVEY_SCREEN',
+          screen: firstScreen,
         },
       },
     },

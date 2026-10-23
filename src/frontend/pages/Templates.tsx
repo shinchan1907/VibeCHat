@@ -44,10 +44,18 @@ export const Templates: React.FC = () => {
   const [headerContent, setHeaderContent] = useState('');
   const [bodyText, setBodyText] = useState('Hello {{1}}, welcome to ByteNex! Your verification code is {{2}}.');
   const [footerText, setFooterText] = useState('Reply STOP to unsubscribe');
-  const [buttons, setButtons] = useState<any[]>([
-    { type: 'QUICK_REPLY', text: 'Confirm' },
-    { type: 'URL', text: 'Visit Website', url: 'https://bytenex.io' },
-  ]);
+  const [buttons, setButtons] = useState<any[]>([]);
+
+  const updateButton = (idx: number, patch: any) =>
+    setButtons((prev) => prev.map((b, i) => (i === idx ? { ...b, ...patch } : b)));
+  const removeButton = (idx: number) => setButtons((prev) => prev.filter((_, i) => i !== idx));
+  const addButton = (type: 'QUICK_REPLY' | 'URL' | 'PHONE_NUMBER') => {
+    if (buttons.length >= 10) return;
+    const base: any = { type, text: '' };
+    if (type === 'URL') base.url = 'https://';
+    if (type === 'PHONE_NUMBER') base.phone_number = '';
+    setButtons((prev) => [...prev, base]);
+  };
   const [creating, setCreating] = useState(false);
 
   const loadTemplates = async () => {
@@ -109,7 +117,14 @@ export const Templates: React.FC = () => {
         header_content: headerType === 'TEXT' ? headerContent : undefined,
         body_text: bodyText,
         footer_text: footerText,
-        buttons,
+        buttons: buttons
+          .filter((b) => (b.text || '').trim() && (b.type !== 'URL' || /^https?:\/\/.+/.test(b.url || '')) && (b.type !== 'PHONE_NUMBER' || (b.phone_number || '').trim()))
+          .map((b) => {
+            const clean: any = { type: b.type, text: b.text.trim() };
+            if (b.type === 'URL') clean.url = b.url.trim();
+            if (b.type === 'PHONE_NUMBER') clean.phone_number = b.phone_number.trim();
+            return clean;
+          }),
       });
 
       if (res.success) {
@@ -356,6 +371,95 @@ export const Templates: React.FC = () => {
               onChange={(e) => setFooterText(e.target.value)}
               style={{ width: '100%' }}
             />
+          </div>
+
+          <div>
+            <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, marginBottom: '4px' }}>
+              Buttons (Optional)
+            </label>
+            <div style={{ fontSize: '11.5px', color: 'var(--text-muted)', marginBottom: '8px' }}>
+              Quick Replies let the customer tap a canned reply. CTA buttons open a website link or start a phone call. Max 10 buttons per template.
+            </div>
+
+            {buttons.map((btn, idx) => (
+              <div
+                key={idx}
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: '130px 1fr auto',
+                  gap: '8px',
+                  marginBottom: '8px',
+                  alignItems: 'start',
+                }}
+              >
+                <select
+                  value={btn.type}
+                  onChange={(e) => {
+                    const t = e.target.value;
+                    const patch: any = { type: t };
+                    if (t === 'URL' && !btn.url) patch.url = 'https://';
+                    if (t === 'PHONE_NUMBER' && !btn.phone_number) patch.phone_number = '';
+                    updateButton(idx, patch);
+                  }}
+                  style={{ width: '100%' }}
+                >
+                  <option value="QUICK_REPLY">Quick Reply</option>
+                  <option value="URL">CTA: Website</option>
+                  <option value="PHONE_NUMBER">CTA: Call</option>
+                </select>
+
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                  <input
+                    type="text"
+                    placeholder="Button text (max 25 chars)"
+                    maxLength={25}
+                    value={btn.text || ''}
+                    onChange={(e) => updateButton(idx, { text: e.target.value })}
+                    style={{ width: '100%' }}
+                  />
+                  {btn.type === 'URL' && (
+                    <input
+                      type="url"
+                      placeholder="https://example.com/offer"
+                      value={btn.url || ''}
+                      onChange={(e) => updateButton(idx, { url: e.target.value })}
+                      style={{ width: '100%', fontFamily: 'var(--font-mono)', fontSize: '12px' }}
+                    />
+                  )}
+                  {btn.type === 'PHONE_NUMBER' && (
+                    <input
+                      type="tel"
+                      placeholder="+919876543210 (with country code)"
+                      value={btn.phone_number || ''}
+                      onChange={(e) => updateButton(idx, { phone_number: e.target.value })}
+                      style={{ width: '100%', fontFamily: 'var(--font-mono)', fontSize: '12px' }}
+                    />
+                  )}
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => removeButton(idx)}
+                  className="btn-icon"
+                  title="Remove button"
+                  style={{ color: 'var(--accent-coral)' }}
+                >
+                  <Trash2 size={14} />
+                </button>
+              </div>
+            ))}
+
+            <div style={{ display: 'flex', gap: '8px', marginTop: '4px' }}>
+              <button type="button" onClick={() => addButton('QUICK_REPLY')} disabled={buttons.length >= 10} className="btn-secondary" style={{ fontSize: '12px', padding: '6px 12px' }}>
+                + Quick Reply
+              </button>
+              <button type="button" onClick={() => addButton('URL')} disabled={buttons.length >= 10} className="btn-secondary" style={{ fontSize: '12px', padding: '6px 12px' }}>
+                + CTA: Website
+              </button>
+              <button type="button" onClick={() => addButton('PHONE_NUMBER')} disabled={buttons.length >= 10} className="btn-secondary" style={{ fontSize: '12px', padding: '6px 12px' }}>
+                + CTA: Call
+              </button>
+            </div>
           </div>
 
           <div className="modal-footer" style={{ margin: '8px -24px -24px -24px' }}>
