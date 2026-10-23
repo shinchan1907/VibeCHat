@@ -286,6 +286,38 @@ webhookRouter.post('/', async (c) => {
               JSON.stringify(msg)
             ).run();
 
+            // C2. Structured Flow submission capture (for the Flows page
+            // Submissions tab + Excel export). Never break the webhook.
+            if (msgType === 'interactive' && msg.interactive?.type === 'nfm_reply') {
+              try {
+                const raw = msg.interactive.nfm_reply?.response_json || '{}';
+                const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
+                const flowToken: string = parsed.flow_token || '';
+                const fields: Record<string, any> = { ...parsed };
+                delete fields.flow_token;
+                let flowId: string | null = null;
+                let flowName: string | null = null;
+                if (flowToken.startsWith('ft_')) {
+                  flowId = flowToken.slice(3);
+                  const f = await c.env.DB.prepare('SELECT name FROM flows WHERE id = ?').bind(flowId).first<any>();
+                  flowName = f?.name || null;
+                }
+                await c.env.DB.prepare(
+                  'INSERT INTO flow_submissions (id, flow_id, flow_name, phone_number, conversation_id, fields_json, flow_token) VALUES (?, ?, ?, ?, ?, ?, ?)'
+                ).bind(
+                  `sub_${Date.now()}_${Math.random().toString(36).substring(7)}`,
+                  flowId,
+                  flowName,
+                  customerPhone,
+                  conv.id,
+                  JSON.stringify(fields),
+                  flowToken || null
+                ).run();
+              } catch (subErr) {
+                console.warn('Flow submission capture failed:', subErr);
+              }
+            }
+
             // D. Check and Trigger Automated Chatbots (If / Else decision tree)
             try {
               const activeBots = await c.env.DB.prepare(

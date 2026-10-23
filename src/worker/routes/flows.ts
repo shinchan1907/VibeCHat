@@ -24,6 +24,102 @@ flowsRouter.get('/', async (c) => {
   return c.json({ success: true, flows });
 });
 
+const FIELD_ORDER = ['customer_name', 'name', 'service', 'select_service', 'best_time_to_call'];
+
+function normalizeTs(ts: string): string {
+  if (!ts) return ts;
+  // D1 CURRENT_TIMESTAMP is UTC 'YYYY-MM-DD HH:MM:SS' — expose as ISO UTC.
+  return ts.includes('T') ? ts : ts.replace(' ', 'T') + 'Z';
+}
+
+async function fetchSubmissions(c: any) {
+  const rows: any = await c.env.DB.prepare(
+    `SELECT s.*, COALESCE(s.flow_name, f.name) AS resolved_flow_name
+     FROM flow_submissions s LEFT JOIN flows f ON f.id = s.flow_id
+     ORDER BY s.created_at DESC LIMIT 1000`
+  ).all();
+  // Map flow option ids (e.g. "ac") to their display titles ("AC Service/Repair")
+  // using each flow's own data-source definitions.
+  const flowRows: any = await c.env.DB.prepare('SELECT id, flow_json FROM flows').all();
+  const optionMaps = new Map<string, Map<string, Map<string, string>>>();
+  for (const fr of flowRows.results || []) {
+    try {
+      const fj = typeof fr.flow_json === 'string' ? JSON.parse(fr.flow_json || '{}') : fr.flow_json;
+      const perField = new Map<string, Map<string, string>>();
+      for (const screen of fj?.screens || []) {
+        for (const child of screen?.layout?.children || []) {
+          if (child?.name && Array.isArray(child['data-source'])) {
+            perField.set(child.name, new Map(child['data-source'].map((o: any) => [o.id, o.title])));
+          }
+        }
+      }
+      optionMaps.set(fr.id, perField);
+    } catch { /* ignore malformed flow json */ }
+  }
+  const translate = (flowId: string | null, fields: Record<string, any>) => {
+    const out: Record<string, any> = { ...fields };
+    for (const [k, v] of Object.entries(out)) {
+      if (typeof v !== 'string') continue;
+      const own = flowId ? optionMaps.get(flowId)?.get(k) : undefined;
+      const anyMap = own || [...optionMaps.values()].map((m) => m.get(k)).find(Boolean);
+      if (anyMap?.has(v)) out[k] = anyMap.get(v);
+    }
+    return out;
+  };
+  return (rows.results || []).map((r: any) => {
+    const fields = typeof r.fields_json === 'string' ? JSON.parse(r.fields_json || '{}') : (r.fields_json || {});
+    return {
+      id: r.id,
+      flow_id: r.flow_id,
+      flow_name: r.resolved_flow_name || 'WhatsApp Flow',
+      phone_number: r.phone_number,
+      fields: translate(r.flow_id, fields),
+      created_at: normalizeTs(r.created_at),
+    };
+  });
+}
+
+/**
+ * List structured Flow submissions (Submissions tab)
+ */
+flowsRouter.get('/submissions', async (c) => {
+  const submissions = await fetchSubmissions(c);
+  return c.json({ success: true, submissions });
+});
+
+/**
+ * Export Flow submissions as CSV (opens directly in Excel)
+ */
+flowsRouter.get('/submissions/export', async (c) => {
+  const submissions = await fetchSubmissions(c);
+  const extraKeys: string[] = [];
+  for (const s of submissions) {
+    for (const k of Object.keys(s.fields || {})) {
+      if (!extraKeys.includes(k)) extraKeys.push(k);
+    }
+  }
+  extraKeys.sort((a, b) => {
+    const ia = FIELD_ORDER.indexOf(a); const ib = FIELD_ORDER.indexOf(b);
+    return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib);
+  });
+  const esc = (v: any) => {
+    const s = v === null || v === undefined ? '' : String(v);
+    return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  };
+  const header = ['Submitted At (UTC)', 'Phone Number', 'Flow', ...extraKeys];
+  const lines = [header.join(',')];
+  for (const s of submissions) {
+    lines.push([s.created_at, s.phone_number, s.flow_name, ...extraKeys.map((k) => (s.fields || {})[k])].map(esc).join(','));
+  }
+  const csv = '﻿' + lines.join('\r\n');
+  return new Response(csv, {
+    headers: {
+      'Content-Type': 'text/csv; charset=utf-8',
+      'Content-Disposition': 'attachment; filename="flow-submissions.csv"',
+    },
+  });
+});
+
 /**
  * Get single Flow by ID
  */
@@ -175,7 +271,9 @@ flowsRouter.post('/:id/send', async (c) => {
       name: 'flow',
       parameters: {
         flow_message_version: '3',
-        flow_token: `flow_token_${Date.now()}`,
+        // Encode the flow id in the token so the webhook can attribute the
+        // submission to this flow (parsed back in the nfm_reply handler).
+        flow_token: `ft_${flow.id}`,
         flow_id: flow.id,
         flow_cta: call_to_action || 'Open Form',
         flow_action: 'navigate',

@@ -20,6 +20,9 @@ import {
   Eye,
   Sliders,
   Smartphone,
+  Download,
+  RefreshCw,
+  ClipboardList,
 } from 'lucide-react';
 
 interface FlowComponent {
@@ -93,8 +96,39 @@ export const MetaFlows: React.FC = () => {
     }
   };
 
+  // Flow Submissions (structured leads captured from nfm_reply webhooks)
+  const [submissions, setSubmissions] = useState<any[]>([]);
+  const [subsLoading, setSubsLoading] = useState(false);
+
+  const loadSubmissions = async () => {
+    try {
+      setSubsLoading(true);
+      const res = await api.flows.submissions();
+      if (res.success) setSubmissions(res.submissions || []);
+    } catch (err) {
+      console.error('Failed to load flow submissions:', err);
+    } finally {
+      setSubsLoading(false);
+    }
+  };
+
+  const handleExportSubmissions = async () => {
+    try {
+      const blob = await api.flows.exportSubmissions();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'flow-submissions.csv';
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (err: any) {
+      alert(err.message || 'Export failed');
+    }
+  };
+
   useEffect(() => {
     loadFlows();
+    loadSubmissions();
   }, []);
 
   const handleCopyEndpoint = () => {
@@ -624,6 +658,64 @@ export const MetaFlows: React.FC = () => {
           </div>
         </div>
       )}
+
+      {/* Flow Submissions — structured leads + Excel export */}
+      <div className="saas-card" style={{ padding: '20px', marginTop: '20px' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <ClipboardList size={17} style={{ color: 'var(--accent-peach)' }} />
+            <h3 style={{ fontSize: '15px', fontWeight: 800 }}>Flow Submissions</h3>
+            <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>({submissions.length})</span>
+          </div>
+          <div style={{ display: 'flex', gap: '8px' }}>
+            <button onClick={loadSubmissions} className="btn-secondary" style={{ padding: '6px 12px', fontSize: '12px' }} disabled={subsLoading}>
+              <RefreshCw size={13} />
+              <span>Refresh</span>
+            </button>
+            <button onClick={handleExportSubmissions} className="btn-pitch" style={{ padding: '6px 12px', fontSize: '12px' }} disabled={submissions.length === 0}>
+              <Download size={13} />
+              <span>Export Excel (CSV)</span>
+            </button>
+          </div>
+        </div>
+
+        {submissions.length === 0 ? (
+          <p style={{ fontSize: '13px', color: 'var(--text-secondary)', padding: '12px 0' }}>
+            No submissions yet. When someone fills and submits a flow, their details will appear here automatically.
+          </p>
+        ) : (
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
+              <thead>
+                <tr>
+                  {['Submitted At', 'Phone Number', 'Flow', ...Array.from(new Set(submissions.flatMap((s) => Object.keys(s.fields || {}))))].map((h) => (
+                    <th key={h} style={{ textAlign: 'left', padding: '8px 10px', borderBottom: '1px solid var(--border-light)', color: 'var(--text-secondary)', fontWeight: 700, whiteSpace: 'nowrap' }}>
+                      {h.replace(/_/g, ' ')}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {submissions.map((s) => {
+                  const cols = Array.from(new Set(submissions.flatMap((x) => Object.keys(x.fields || {}))));
+                  return (
+                    <tr key={s.id}>
+                      <td style={{ padding: '8px 10px', borderBottom: '1px solid var(--border-light)', whiteSpace: 'nowrap' }}>
+                        {new Date(s.created_at).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}
+                      </td>
+                      <td style={{ padding: '8px 10px', borderBottom: '1px solid var(--border-light)', whiteSpace: 'nowrap' }}>+{s.phone_number}</td>
+                      <td style={{ padding: '8px 10px', borderBottom: '1px solid var(--border-light)', whiteSpace: 'nowrap' }}>{s.flow_name}</td>
+                      {cols.map((k) => (
+                        <td key={k} style={{ padding: '8px 10px', borderBottom: '1px solid var(--border-light)' }}>{String((s.fields || {})[k] ?? '')}</td>
+                      ))}
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
 
       {/* Simulator Modal */}
       {selectedSimFlow && (

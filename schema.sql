@@ -161,6 +161,19 @@ CREATE TABLE IF NOT EXISTS flows (
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
+-- Structured Flow Submissions (parsed from nfm_reply webhooks; shown in the
+-- Flows page Submissions tab and exported to CSV/Excel)
+CREATE TABLE IF NOT EXISTS flow_submissions (
+  id TEXT PRIMARY KEY,
+  flow_id TEXT,
+  flow_name TEXT,
+  phone_number TEXT NOT NULL,
+  conversation_id TEXT,
+  fields_json TEXT DEFAULT '{}',
+  flow_token TEXT,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
 -- Chatbot Workflows & Automation (If-Else, Keyword Triggers, Interactive Decision Trees)
 CREATE TABLE IF NOT EXISTS chatbot_flows (
   id TEXT PRIMARY KEY,
